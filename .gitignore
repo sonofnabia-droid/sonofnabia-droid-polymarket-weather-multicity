@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Logs
+live_bot_logs/
+test_logs/
+*.log
+
+# Backtest results
+backtest_results/
+
+# Model files (opcional - comentar se queres commitar)
+# *_peak_model/
+
+# Historic data backups
+historic/*.backup_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+0
+50
+70
+=
+json
+argparse
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb

@@ -1,0 +1,35 @@
+{
+  "feature_cols": [
+    "slot_frac",
+    "doy_sin",
+    "doy_cos",
+    "temp_c",
+    "running_max",
+    "temp_vs_climatology",
+    "delta_30m",
+    "delta_1h",
+    "accel",
+    "recent_slope",
+    "temp_lag_3",
+    "roll3_std",
+    "plateau_indicator",
+    "morning_max",
+    "radiation_proxy",
+    "humidity_drop_1h",
+    "prev_7d_avg_max",
+    "seasonal_peak_prior",
+    "dewpoint_c",
+    "temp_to_dewpoint_gap",
+    "pressure_trend_3h",
+    "wind_south_proxy",
+    "wind_speed_kmh",
+    "uv_index",
+    "foehn_indicator"
+  ],
+  "ensemble_weights": {
+    "lgbm": 0.5,
+    "xgb": 0.3,
+    "zscore": 0.2
+  },
+  "global_auc": 0.966187530611136
+}
