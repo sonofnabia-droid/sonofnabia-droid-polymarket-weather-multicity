@@ -1,59 +1,74 @@
 """
-polymarket_clob.py  - BRANCH - INTEGRATION
-==================
-Camada de acesso ao Polymarket CLOB.
+polymarket_clob.py — V2 Híbrida Definitiva (Multi-Cidade)
+=========================================================
+Camada de acesso ao Polymarket CLOB usando py_clob_client_v2.
 
 Responsabilidades:
-  - Derivar credenciais L2 (API key / secret / passphrase) a partir da private key Polygon
+  - Derivar credenciais L2 a partir da private key Polygon
   - Consultar order book (bid, ask, spread, depth)
   - Enriquecer brackets do mercado com dados CLOB em tempo real
-  - Colocar ordens limitadas (modo REAL) ou simular (modo PAPER)
+  - Colocar ordens (modo REAL) ou simular (modo PAPER)
+  - Suporte a dry_run (assina ordem mas não submete)
 
 Dependência:
-    pip install py-clob-client
+    pip install py_clob_client_v2
 
 Variáveis de ambiente:
-    POLY_PRIVATE_KEY=0x...    (obrigatória para REAL e para order book autenticado)
-    POLY_FUNDER=0x...         (opcional — endereço da wallet funder em contas delegadas)
-
-Uso típico:
-    from polymarket_clob import ClobClient, TradingMode, PositionManager, Position
-    clob = ClobClient(private_key=..., mode=TradingMode.PAPER, max_daily_loss=50.0)
-    book = clob.get_orderbook(token_id)
-    result = clob.buy_yes(token_id, price_ask, size_usdc)
-    # Posições registadas automaticamente em clob.positions
-    clob.positions.refresh(clob)          # actualiza P&L e verifica resolução
-    opens = clob.positions.open_positions()
+    POLY_PRIVATE_KEY=0x...    (obrigatória)
+    POLY_FUNDER=0x...         (opcional — contas delegadas)
+    POLY_API_KEY / POLY_API_SECRET / POLY_API_PASSPHRASE  (alternativa)
 """
-
 from __future__ import annotations
-
-import json
-import logging
-import os
-import math
-import time
+import json, logging, os, math, time, sys
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
+CLOB_HOST = "https://clob.polymarket.com"
+CHAIN_ID = 137
+TICK_SIZE = 0.01
+MIN_SIZE = 5.0
+FEE_RATE = 0.0
 
-# ── Polymarket CLOB endpoints ─────────────────────────
-CLOB_HOST   = "https://clob.polymarket.com"
-CHAIN_ID    = 137   # Polygon mainnet
+# ==========================================
+# CLOUDFLARE BYPASS (apenas para Orderbooks Públicos)
+# ==========================================
+try:
+    from curl_cffi import requests as cffi_requests
+    import httpx as _httpx
+    import json as _json
 
-# ── Constantes de ordem ───────────────────────────────
-TICK_SIZE   = 0.01          # mínimo incremento de preço no CLOB
-MIN_SIZE    = 5.0           # tamanho mínimo de ordem em USDC (Polymarket exige ≥ $1, usamos $5 por segurança)
-FEE_RATE    = 0.0           # Polymarket não cobra fee no CLOB actualmente
+    class _FakeResponse:
+        def __init__(self, status_code, headers, content):
+            self.status_code = status_code
+            self.headers = _httpx.Headers(headers)
+            self._content = content
+        @property
+        def content(self): return self._content
+        @property
+        def text(self): return self._content.decode('utf-8')
+        def json(self): return _json.loads(self.text)
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise _httpx.HTTPStatusError(f'Erro {self.status_code}', request=None, response=self)
 
+    _orig_send = _httpx.Client.send
+    def _patched_send(self, request, **kwargs):
+        url_str = str(request.url)
+        if 'polymarket.com' in url_str and '/book' in url_str:
+            bad = ['user-agent', 'accept-encoding', 'host', 'connection', 'transfer-encoding']
+            clean = {k: v for k, v in request.headers.items() if k.lower() not in bad}
+            if not request.content: clean.pop('content-length', None)
+            resp = cffi_requests.request(method=request.method, url=url_str, headers=clean, data=request.content, impersonate='chrome')
+            return _FakeResponse(resp.status_code, dict(resp.headers), resp.content)
+        return _orig_send(self, request, **kwargs)
+    _httpx.Client.send = _patched_send
+    logger.info("Cloudflare Bypass ativo (apenas /book).")
+except ImportError:
+    logger.warning("curl_cffi não instalado — Cloudflare bypass desactivado.")
 
-# ══════════════════════════════════════════════════════
-#  ENUMS / DATACLASSES
-# ══════════════════════════════════════════════════════
 
 class TradingMode(Enum):
     PAPER = "paper"
@@ -68,230 +83,223 @@ class OrderBookLevel:
 
 @dataclass
 class OrderBook:
-    token_id:  str
+    token_id: str
     timestamp: float
-    bids:      list[OrderBookLevel] = field(default_factory=list)   # melhor primeiro (mais alto)
-    asks:      list[OrderBookLevel] = field(default_factory=list)   # melhor primeiro (mais baixo)
+    bids: list[OrderBookLevel] = field(default_factory=list)
+    asks: list[OrderBookLevel] = field(default_factory=list)
 
     @property
-    def best_bid(self) -> float | None:
-        return self.bids[0].price if self.bids else None
-
+    def best_bid(self): return self.bids[0].price if self.bids else None
     @property
-    def best_ask(self) -> float | None:
-        return self.asks[0].price if self.asks else None
-
+    def best_ask(self): return self.asks[0].price if self.asks else None
     @property
-    def mid(self) -> float | None:
-        if self.best_bid and self.best_ask:
-            return round((self.best_bid + self.best_ask) / 2, 4)
+    def mid(self):
+        if self.best_bid and self.best_ask: return round((self.best_bid + self.best_ask) / 2, 4)
         return self.best_ask or self.best_bid
-
     @property
-    def spread(self) -> float | None:
-        if self.best_bid and self.best_ask:
-            return round(self.best_ask - self.best_bid, 4)
+    def spread(self):
+        if self.best_bid and self.best_ask: return round(self.best_ask - self.best_bid, 4)
         return None
-
     @property
-    def bid_depth_usdc(self) -> float:
-        """USDC total nos top-5 bids."""
-        return round(sum(l.price * l.size for l in self.bids[:5]), 2)
-
+    def bid_depth_usdc(self): return round(sum(l.price * l.size for l in self.bids[:5]), 2)
     @property
-    def ask_depth_usdc(self) -> float:
-        """USDC total nos top-5 asks."""
-        return round(sum(l.price * l.size for l in self.asks[:5]), 2)
+    def ask_depth_usdc(self): return round(sum(l.price * l.size for l in self.asks[:5]), 2)
 
 
 @dataclass
 class OrderResult:
-    success:    bool
-    mode:       TradingMode
-    order_id:   str | None     = None
-    token_id:   str | None     = None
-    side:       str            = "BUY"
-    outcome:    str            = "YES"
-    price:      float          = 0.0
-    size_usdc:  float          = 0.0
-    shares:     float          = 0.0
-    status:     str            = ""
-    error:      str | None     = None
-    timestamp:  str            = ""
-    simulated:  bool           = False
+    success: bool
+    mode: TradingMode
+    order_id: str | None = None
+    token_id: str | None = None
+    side: str = "BUY"
+    outcome: str = "YES"
+    price: float = 0.0
+    size_usdc: float = 0.0
+    shares: float = 0.0
+    status: str = ""
+    error: str | None = None
+    timestamp: str = ""
+    simulated: bool = False
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
-            "success":   self.success,
-            "mode":      self.mode.value,
-            "order_id":  self.order_id,
-            "token_id":  self.token_id,
-            "side":      self.side,
-            "outcome":   self.outcome,
-            "price":     self.price,
-            "size_usdc": self.size_usdc,
-            "shares":    self.shares,
-            "status":    self.status,
-            "error":     self.error,
-            "timestamp": self.timestamp,
+            "success": self.success, "mode": self.mode.value,
+            "order_id": self.order_id, "token_id": self.token_id,
+            "side": self.side, "outcome": self.outcome,
+            "price": self.price, "size_usdc": self.size_usdc,
+            "shares": self.shares, "status": self.status,
+            "error": self.error, "timestamp": self.timestamp,
             "simulated": self.simulated,
         }
 
 
-# ══════════════════════════════════════════════════════
-#  CLOB CLIENT
-# ══════════════════════════════════════════════════════
-
 class ClobClient:
     """
-    Cliente CLOB para o Polymarket.
+    Cliente CLOB para o Polymarket (v2).
 
-    Parâmetros
-    ----------
-    private_key : str
-        Private key da wallet Polygon (0x...).
-    mode : TradingMode
-        PAPER → simula ordens, não envia nada.
-        REAL  → envia ordens reais ao CLOB.
-    max_daily_loss : float
-        Stop-loss diário em USDC. Se a perda realizada + ordens abertas
-        atingirem este valor, novas ordens são bloqueadas.
-    log_dir : Path
-        Directório onde guardar logs de ordens.
+    Suporta PAPER (simulado), REAL (ordens reais) e dry_run (assina sem submeter).
     """
 
-    def __init__(
-        self,
-        private_key: str,
-        mode: TradingMode = TradingMode.PAPER,
-        max_daily_loss: float = 50.0,
-        log_dir: Path = Path("live_bot_logs"),
-    ):
+    def __init__(self, private_key: str, mode: TradingMode = TradingMode.PAPER,
+                 max_daily_loss: float = 50.0, log_dir: Path = Path("live_bot_logs")):
         if not private_key:
-            raise ValueError(
-                "POLY_PRIVATE_KEY não definida.\n"
-                "  export POLY_PRIVATE_KEY=0x...   (Linux/macOS)\n"
-                "  set POLY_PRIVATE_KEY=0x...       (Windows CMD)"
-            )
-
-        self.mode           = mode
+            raise ValueError("POLY_PRIVATE_KEY não definida.")
+        self.mode = mode
         self.max_daily_loss = max_daily_loss
-        self.log_dir        = log_dir
+        self.log_dir = log_dir
         self.log_dir.mkdir(exist_ok=True)
-
-        # P&L diário (loss = positivo → perda)
-        self._daily_loss:   float      = 0.0
-        self._daily_date:   date | None = None
-        self._order_log:    list[dict] = []
-
-        # Portfolio de posições
-        self.positions: PositionManager = PositionManager(mode, log_dir)
-
-        # Inicializar cliente py-clob-client
+        self._daily_loss = 0.0
+        self._daily_date = None
+        self._order_log = []
+        self.positions = PositionManager(mode, log_dir)
         self._client = self._init_clob_client(private_key)
 
-    # ── Inicialização ──────────────────────────────────
-
     def _init_clob_client(self, private_key: str):
-        """
-        Inicializa py-clob-client e obtém credenciais L2 via
-        create_or_derive_api_creds() — método recomendado que cria
-        novas creds se não existirem, ou reutiliza as existentes.
+        """Inicializa py_clob_client_v2 e obtém credenciais."""
+        from py_clob_client_v2 import ClobClient as _ClobClient
 
-        Suporta POLY_FUNDER para contas com funder separado (carteiras delegadas).
+        funder = os.environ.get("POLY_FUNDER", "").strip()
+        signature_type = 2 if funder else int(os.environ.get("POLY_SIGNATURE_TYPE", 0))
 
-        signature_type controla como a assinatura é validada (CRÍTICO):
-          0 = EOA pura (private key === endereço Polymarket)        — SEM funder
-          1 = Email/Magic link login (proxy wallet)                  — COM funder
-          2 = Browser wallet (MetaMask/Coinbase proxy)               — COM funder
-
-        Lê de env var POLY_SIGNATURE_TYPE. Se não definida:
-          - Se POLY_FUNDER definido  → assume 2 (browser wallet, mais comum)
-          - Se POLY_FUNDER ausente   → assume 0 (EOA pura)
-        """
-        try:
-            from py_clob_client.client import ClobClient as _ClobClient
-        except ImportError:
-            raise ImportError(
-                "py-clob-client não instalado.\n"
-                "  pip install py-clob-client"
-            )
-
-        # Ler FUNDER e SIGNATURE_TYPE da variável de ambiente
-        funder = os.environ.get("POLY_FUNDER") or None
-        sig_type_env = os.environ.get("POLY_SIGNATURE_TYPE")
-
-        if sig_type_env is not None:
-            signature_type = int(sig_type_env)
-        elif funder:
-            signature_type = 2   # browser wallet (MetaMask/Coinbase) — caso mais comum
-            logger.info(
-                "POLY_FUNDER detectado mas POLY_SIGNATURE_TYPE não definido. "
-                "Assumindo signature_type=2 (browser wallet). "
-                "Se usas Email/Magic login, define POLY_SIGNATURE_TYPE=1."
-            )
-        else:
-            signature_type = 0   # EOA pura
-            logger.info("Sem POLY_FUNDER. Assumindo signature_type=0 (EOA pura).")
-
-        # Construir kwargs de inicialização — só passar funder/sig_type se relevantes
-        client_kwargs = {
-            "host":     CLOB_HOST,
-            "chain_id": CHAIN_ID,
-            "key":      private_key,
-        }
+        client_kwargs = {"host": CLOB_HOST, "chain_id": CHAIN_ID, "key": private_key}
         if signature_type != 0:
             client_kwargs["signature_type"] = signature_type
             client_kwargs["funder"] = funder
 
-        client = _ClobClient(**client_kwargs)
+        creds_ok = False
+        last_error = None
 
-        logger.info(
-            f"py-clob-client inicializado: signature_type={signature_type}, "
-            f"funder={'<set>' if funder else '<none>'}"
-        )
+        # Tentativa 1: derive via funder (proxy wallet)
+        if funder:
+            try:
+                client = _ClobClient(**client_kwargs)
+                creds = client.derive_api_key()
+                client.set_api_creds(creds)
+                logger.info("Creds via derive_api_key (Proxy)")
+                creds_ok = True
+            except Exception as e:
+                last_error = e
 
-        # Obter credenciais L2 via create_or_derive_api_creds()
-        # Cria novas creds se não existirem; reutiliza se já existirem no servidor.
-        try:
-            creds = client.create_or_derive_api_creds()
-            client.set_api_creds(creds)
-            logger.info("Credenciais CLOB obtidas via create_or_derive_api_creds()")
-        except Exception as e:
-            logger.warning(
-                "Falha em create_or_derive_api_creds: %s — order book público ainda funciona", e
-            )
+        # Tentativa 2: creds via env vars
+        if not creds_ok:
+            env_key = os.environ.get("POLY_API_KEY", "")
+            env_secret = os.environ.get("POLY_API_SECRET", "")
+            env_pass = os.environ.get("POLY_API_PASSPHRASE", "")
+            if env_key and env_secret and env_pass:
+                try:
+                    from py_clob_client_v2 import ApiCreds
+                    client_kwargs["creds"] = ApiCreds(
+                        api_key=env_key, api_secret=env_secret, api_passphrase=env_pass
+                    )
+                    client = _ClobClient(**client_kwargs)
+                    creds_ok = True
+                except Exception as e:
+                    last_error = e
+                    client_kwargs.pop("creds", None)
 
-        # Guardar para uso posterior
-        self._signature_type = signature_type
-        self._funder = funder
+        # Tentativa 3: create_or_derive
+        if not creds_ok:
+            try:
+                client = _ClobClient(**client_kwargs)
+                for m in ["create_or_derive_api_key", "derive_api_key"]:
+                    if hasattr(client, m):
+                        creds = getattr(client, m)()
+                        client.set_api_creds(creds)
+                        creds_ok = True
+                        break
+            except Exception as e:
+                last_error = e
+
+        if not creds_ok and self.mode == TradingMode.REAL:
+            raise RuntimeError(f"Impossível obter creds REAL! Erro: {last_error}")
 
         return client
 
-    def _dry_run_result(
-        self, signed_order, side, token_id, price, size_usdc,
-        shares, otype, bracket_label, ts,
-    ) -> "OrderResult":
-        """
-        Constrói um OrderResult quando dry_run=True. Mostra ao stdout o que
-        SERIA enviado e regista na log normal mas não chama post_order.
-        """
-        # Tentar serializar o signed_order para inspecção
+    # ── Order Book ─────────────────────────────────────
+
+    def get_orderbook(self, token_id: str) -> OrderBook | None:
+        if not token_id:
+            return None
+        try:
+            book_raw = self._client.get_order_book(token_id)
+            if isinstance(book_raw, dict):
+                return None
+            bids = sorted(
+                [OrderBookLevel(float(b.price), float(b.size)) for b in (book_raw.bids or [])],
+                key=lambda x: -x.price,
+            )
+            asks = sorted(
+                [OrderBookLevel(float(a.price), float(a.size)) for a in (book_raw.asks or [])],
+                key=lambda x: x.price,
+            )
+            return OrderBook(token_id=token_id, timestamp=time.time(), bids=bids, asks=asks)
+        except Exception as e:
+            if "404" not in str(e):
+                logger.warning("get_orderbook falhou: %s", e)
+            return None
+
+    def enrich_bracket(self, bracket: dict) -> dict:
+        b = dict(bracket)
+        token_id = b.get("token_id")
+        if not token_id:
+            b["ask"] = b.get("price")
+            b["bid"] = b.get("price")
+            b["spread"] = None
+            b["book"] = None
+            return b
+        book = self.get_orderbook(token_id)
+        if book and book.best_ask is not None:
+            b["ask"] = book.best_ask
+            b["bid"] = book.best_bid
+            b["spread"] = book.spread
+            b["mid"] = book.mid
+            b["book"] = book
+            b["price"] = book.best_ask
+        else:
+            b["ask"] = b.get("price")
+            b["bid"] = b.get("price")
+            b["spread"] = None
+            b["mid"] = b.get("price")
+            b["book"] = None
+        return b
+
+    # ── Gestão de risco ────────────────────────────────
+
+    def _reset_daily_if_needed(self):
+        today = date.today()
+        if self._daily_date != today:
+            self._daily_date = today
+            self._daily_loss = 0.0
+
+    def daily_loss(self):
+        self._reset_daily_if_needed()
+        return self._daily_loss
+
+    def stop_loss_triggered(self):
+        return self.daily_loss() >= self.max_daily_loss
+
+    def record_loss(self, amount: float):
+        self._reset_daily_if_needed()
+        self._daily_loss = round(self._daily_loss + amount, 4)
+
+    # ── dry_run helper ─────────────────────────────────
+
+    def _dry_run_result(self, signed_order, side, token_id, price,
+                        size_usdc, shares, otype, bracket_label, ts):
+        """Constrói OrderResult para dry_run — assina mas NÃO submete."""
         try:
             order_dict = signed_order.dict() if hasattr(signed_order, 'dict') else dict(signed_order)
         except Exception:
             order_dict = {"_unserializable": str(signed_order)[:200]}
 
         logger.warning(
-            "🟡 DRY-RUN — ordem assinada com sucesso mas NÃO submetida.\n"
-            f"  side={side} token_id={token_id[:16]}... price={price:.4f} "
-            f"size_usdc=${size_usdc:.2f} shares={shares} order_type={otype}\n"
-            f"  signed_payload_keys: {list(order_dict.keys())}"
+            "DRY-RUN — ordem assinada mas NÃO submetida. "
+            "side=%s token_id=%s... price=%.4f size_usdc=$%.2f shares=%s type=%s",
+            side, (token_id or "")[:16], price, size_usdc, shares, otype,
         )
-
-        # Imprimir também ao console
         print(f"\n{'='*60}")
-        print(f"🟡 DRY-RUN BUY (não submetido ao Polymarket)")
+        print(f"DRY-RUN BUY (não submetido ao Polymarket)")
         print(f"{'='*60}")
         print(f"  token_id     : {token_id}")
         print(f"  side         : {side}")
@@ -300,481 +308,232 @@ class ClobClient:
         print(f"  shares       : {shares}")
         print(f"  order_type   : {otype}")
         print(f"  bracket      : {bracket_label}")
-        print(f"  signature_type: {getattr(self, '_signature_type', '?')}")
-        print(f"  funder       : {getattr(self, '_funder', None) or '<none>'}")
-        print(f"  signed       : ✓ assinatura gerada com sucesso")
-        print(f"  submitted    : ✗ NOT SUBMITTED (dry-run)")
         print(f"{'='*60}\n")
 
         return OrderResult(
-            success    = True,        # signing funcionou
-            mode       = TradingMode.REAL,
-            order_id   = "DRYRUN-" + str(int(time.time())),
-            token_id   = token_id,
-            side       = side,
-            outcome    = "YES",
-            price      = round(price, 4),
-            size_usdc  = round(size_usdc, 2),
-            shares     = shares,
-            status     = "DRY_RUN_OK",
-            timestamp  = ts,
-            simulated  = True,
-            error      = None,
+            success=True, mode=TradingMode.REAL,
+            order_id="DRYRUN-" + str(int(time.time())),
+            token_id=token_id, side=side, outcome="YES",
+            price=round(price, 4), size_usdc=round(size_usdc, 2),
+            shares=shares, status="DRY_RUN_OK", timestamp=ts,
+            simulated=True, error=None,
         )
-
-    # ── Order Book ─────────────────────────────────────
-
-    def get_orderbook(self, token_id: str) -> OrderBook | None:
-        """
-        Consulta o order book do CLOB para um token específico.
-        Devolve OrderBook com bids/asks ordenados (melhor primeiro).
-        Devolve None se falhar.
-        """
-        if not token_id:
-            return None
-        try:
-            book_raw = self._client.get_order_book(token_id)
-            bids = sorted(
-                [OrderBookLevel(float(b.price), float(b.size))
-                 for b in (book_raw.bids or [])],
-                key=lambda x: -x.price,   # melhor bid = mais alto
-            )
-            asks = sorted(
-                [OrderBookLevel(float(a.price), float(a.size))
-                 for a in (book_raw.asks or [])],
-                key=lambda x: x.price,    # melhor ask = mais baixo
-            )
-            return OrderBook(
-                token_id  = token_id,
-                timestamp = time.time(),
-                bids      = bids,
-                asks      = asks,
-            )
-        except Exception as e:
-            # 404 = mercado fechado ou token inactivo — esperado, não é erro
-            err_str = str(e)
-            if "404" not in err_str:
-                logger.warning("get_orderbook falhou para %s: %s", token_id, e)
-            return None
-
-    def enrich_bracket(self, bracket: dict) -> dict:
-        """
-        Adiciona dados CLOB (bid, ask, spread) a um bracket do mercado.
-        Se o CLOB falhar, mantém o preço Gamma como fallback.
-        Returns novo dict enriquecido (não modifica o original).
-        """
-        b = dict(bracket)
-        token_id = b.get("token_id")
-        if not token_id:
-            b["ask"]    = b.get("price")
-            b["bid"]    = b.get("price")
-            b["spread"] = None
-            b["book"]   = None
-            return b
-
-        book = self.get_orderbook(token_id)
-        if book and book.best_ask is not None:
-            b["ask"]    = book.best_ask
-            b["bid"]    = book.best_bid
-            b["spread"] = book.spread
-            b["mid"]    = book.mid
-            b["book"]   = book
-            # Actualizar price para o ask (o que pagas ao comprar YES)
-            b["price"]  = book.best_ask
-        else:
-            b["ask"]    = b.get("price")
-            b["bid"]    = b.get("price")
-            b["spread"] = None
-            b["mid"]    = b.get("price")
-            b["book"]   = None
-
-        return b
-
-    # ── Gestão de risco ────────────────────────────────
-
-    def _reset_daily_if_needed(self) -> None:
-        today = date.today()
-        if self._daily_date != today:
-            self._daily_date = today
-            self._daily_loss = 0.0
-
-    def daily_loss(self) -> float:
-        self._reset_daily_if_needed()
-        return self._daily_loss
-
-    def stop_loss_triggered(self) -> bool:
-        return self.daily_loss() >= self.max_daily_loss
-
-    def record_loss(self, amount: float) -> None:
-        """Registar perda realizada (chamado quando uma posição resolve contra nós)."""
-        self._reset_daily_if_needed()
-        self._daily_loss = round(self._daily_loss + amount, 4)
 
     # ── Colocação de ordens ────────────────────────────
 
-    def buy_yes(
-        self,
-        token_id:      str,
-        price:         float,
-        size_usdc:     float,
-        bracket_label: str  = "",
-        market_slug:   str  = "",
-        temp_lo:       float = 0.0,
-        temp_hi:       float = 0.0,
-        order_type:    str  = "FOK",
-        dry_run:       bool = False,
-    ) -> OrderResult:
-        """
-        Comprar YES num bracket.
-
-        Parâmetros
-        ----------
-        token_id      : CLOB token ID do outcome YES
-        price         : preço limite em USDC por share (0–1), tipicamente o ask
-        size_usdc     : montante em USDC a gastar (não shares)
-        bracket_label : label do bracket para logging
-        market_slug   : slug do mercado Polymarket
-        temp_lo       : limite inferior do bracket
-        temp_hi       : limite superior do bracket
-        order_type    : "FOK" (Fill-or-Kill, comportamento de market order — default)
-                        "GTC" (Good-Till-Cancelled, fica no book se não encher)
-        dry_run       : Se True, constrói e ASSINA a ordem mas NÃO submete.
-                        Útil para validar credenciais e payload antes de gastar $.
-                        Funciona SÓ em mode REAL (em PAPER já é dry por natureza).
-
-        FOK ao ask = market order: preenche imediatamente ou cancela.
-        GTC ao ask = limit order: pode ficar pendente no order book.
-
-        Devolve OrderResult com resultado da operação.
-        """
+    def buy_yes(self, token_id: str, price: float, size_usdc: float,
+                bracket_label: str = "", market_slug: str = "",
+                order_type: str = "FOK", dry_run: bool = False) -> OrderResult:
         from datetime import datetime as _dt
-
         self._reset_daily_if_needed()
         ts = _dt.now().isoformat()
 
-        # Validações
         if self.stop_loss_triggered():
-            return OrderResult(
-                success=False, mode=self.mode,
-                error=f"Stop-loss diário atingido (perda={self._daily_loss:.2f} >= max={self.max_daily_loss:.2f})",
-                timestamp=ts,
-            )
+            return OrderResult(success=False, mode=self.mode,
+                               error=f"Stop-loss diário atingido ({self._daily_loss:.2f} >= {self.max_daily_loss:.2f})",
+                               timestamp=ts)
 
         if size_usdc < MIN_SIZE:
-            return OrderResult(
-                success=False, mode=self.mode,
-                error=f"Tamanho ${size_usdc:.2f} abaixo do mínimo ${MIN_SIZE:.2f}",
-                timestamp=ts,
-            )
+            return OrderResult(success=False, mode=self.mode,
+                               error=f"Tamanho ${size_usdc:.2f} abaixo do mínimo ${MIN_SIZE:.2f}",
+                               timestamp=ts)
 
-        if not (TICK_SIZE <= price <= 1 - TICK_SIZE):
-            return OrderResult(
-                success=False, mode=self.mode,
-                error=f"Preço {price:.4f} fora do intervalo válido [{TICK_SIZE}, {1-TICK_SIZE}]",
-                timestamp=ts,
-            )
-
-        # Para ordens FOK (market buy) o Polymarket exige:
-        #   makerAmount (USDC)   = shares × price   → máx 2 casas decimais
-        #   takerAmount (shares)                     → máx 4 casas decimais
-        # Com price = P/100 e GCD(P,100)=1 (ex: 0.49), a única solução é shares inteiro.
-        # Usamos floor para nunca gastar mais do que o pedido.
-        if order_type.upper() == "FOK":
-            shares = math.floor(size_usdc / price)          # inteiro → maker sempre limpo
-        else:
-            shares = round(size_usdc / price, 4)            # GTC: 4 casas decimais
+        shares = math.floor(size_usdc / price) if order_type.upper() == "FOK" else round(size_usdc / price, 4)
 
         # ── PAPER MODE ────────────────────────────────
         if self.mode == TradingMode.PAPER:
             result = OrderResult(
-                success    = True,
-                mode       = TradingMode.PAPER,
-                order_id   = f"PAPER-{int(time.time())}",
-                token_id   = token_id,
-                side       = "BUY",
-                outcome    = "YES",
-                price      = round(price, 4),
-                size_usdc  = round(size_usdc, 2),
-                shares     = shares,
-                status     = "SIMULATED",
-                timestamp  = ts,
-                simulated  = True,
+                success=True, mode=TradingMode.PAPER,
+                order_id=f"PAPER-{int(time.time())}",
+                token_id=token_id, side="BUY", outcome="YES",
+                price=round(price, 4), size_usdc=round(size_usdc, 2),
+                shares=shares, status="SIMULATED", timestamp=ts, simulated=True,
             )
             self._log_order(result, bracket_label)
-            # Registar posição no portfolio
             self.positions.add(Position(
-                date_opened   = ts[:10],
-                bracket_label = bracket_label,
-                token_id      = token_id,
-                entry_ask     = round(price, 4),
-                shares        = shares,
-                size_usdc     = round(size_usdc, 2),
-                mode          = "paper",
-                order_id      = result.order_id,
-                market_slug   = market_slug,
-                temp_lo       = temp_lo,
-                temp_hi       = temp_hi,
+                date_opened=ts[:10], bracket_label=bracket_label,
+                token_id=token_id, entry_ask=round(price, 4),
+                shares=shares, size_usdc=round(size_usdc, 2),
+                mode="paper", order_id=result.order_id,
+                market_slug=market_slug,
             ))
             return result
 
         # ── REAL MODE ─────────────────────────────────
         try:
-            from py_clob_client.clob_types import OrderArgs, MarketOrderArgs, OrderType
-            from py_clob_client.order_builder.constants import BUY
+            from py_clob_client_v2 import OrderArgs, Side, OrderType, PartialCreateOrderOptions
 
-            _otype_str = order_type.upper()
-
-            if _otype_str == "FOK":
-                # FOK = Market Order: usa MarketOrderArgs com AMOUNT em USDC
-                # (NÃO size em shares). O cliente calcula shares com base no
-                # orderbook actual.
-                market_args = MarketOrderArgs(
-                    token_id   = token_id,
-                    amount     = round(size_usdc, 2),   # USDC, não shares
-                    side       = BUY,
-                    order_type = OrderType.FOK,
-                )
-                signed_order = self._client.create_market_order(market_args)
+            if order_type.upper() == "FOK":
+                order_args = OrderArgs(token_id=token_id, price=price, side=Side.BUY, size=shares)
+                signed_order = self._client.create_market_order(order_args)
                 if dry_run:
                     return self._dry_run_result(
-                        signed_order, "BUY", token_id, price, size_usdc,
-                        shares, "FOK", bracket_label, ts,
+                        signed_order, "BUY", token_id, price, size_usdc, shares, "FOK", bracket_label, ts,
                     )
-                response = self._client.post_order(signed_order, OrderType.FOK)
+                response = self._client.create_and_post_market_order(order_args=order_args)
             else:
-                # GTC = Limit Order: usa OrderArgs com SIZE em shares e PRICE
-                order_args = OrderArgs(
-                    token_id = token_id,
-                    price    = round(price, 4),
-                    size     = shares,
-                    side     = BUY,
-                )
+                order_args = OrderArgs(token_id=token_id, price=price, side=Side.BUY, size=shares)
                 signed_order = self._client.create_order(order_args)
                 if dry_run:
                     return self._dry_run_result(
-                        signed_order, "BUY", token_id, price, size_usdc,
-                        shares, "GTC", bracket_label, ts,
+                        signed_order, "BUY", token_id, price, size_usdc, shares, "GTC", bracket_label, ts,
                     )
-                response = self._client.post_order(signed_order, OrderType.GTC)
+                response = self._client.create_and_post_order(
+                    order_args=order_args,
+                    options=PartialCreateOrderOptions(tick_size=str(TICK_SIZE)),
+                    order_type=OrderType.GTC,
+                )
 
             order_id = response.get("orderID") or response.get("id") or "?"
-            status   = response.get("status", "unknown")
+            status = response.get("status", "unknown")
 
-            # FOK: só "matched" é sucesso (canceled = não encheu)
-            # GTC: "matched"/"live"/"delayed" são todos estados válidos
-            if _otype_str == "FOK":
+            if order_type.upper() == "FOK":
                 _success = status == "matched"
             else:
                 _success = status in ("matched", "live", "delayed")
 
             result = OrderResult(
-                success    = _success,
-                mode       = TradingMode.REAL,
-                order_id   = order_id,
-                token_id   = token_id,
-                side       = "BUY",
-                outcome    = "YES",
-                price      = round(price, 4),
-                size_usdc  = round(size_usdc, 2),
-                shares     = shares,
-                status     = status,
-                timestamp  = ts,
-                simulated  = False,
+                success=_success, mode=TradingMode.REAL,
+                order_id=order_id, token_id=token_id,
+                side="BUY", outcome="YES",
+                price=round(price, 4), size_usdc=round(size_usdc, 2),
+                shares=shares, status=status, timestamp=ts,
+                simulated=False,
+                error=None if _success else f"Status: {status}",
             )
-
-            if not result.success:
-                result.error = f"Status inesperado: {status} | response: {response}"
-
         except Exception as e:
             result = OrderResult(
-                success   = False,
-                mode      = TradingMode.REAL,
-                token_id  = token_id,
-                error     = str(e),
-                timestamp = ts,
-                simulated = False,
+                success=False, mode=TradingMode.REAL,
+                token_id=token_id, error=str(e),
+                timestamp=ts, simulated=False,
             )
-            logger.error("Falha ao colocar ordem REAL: %s", e)
+            logger.error("Falha ordem REAL: %s", e)
 
         self._log_order(result, bracket_label)
-        # Registar posição no portfolio se a ordem foi aceite
         if result.success:
             self.positions.add(Position(
-                date_opened   = ts[:10],
-                bracket_label = bracket_label,
-                token_id      = token_id,
-                entry_ask     = round(price, 4),
-                shares        = shares,
-                size_usdc     = round(size_usdc, 2),
-                mode          = "real",
-                order_id      = result.order_id or "",
-                market_slug   = market_slug,
-                temp_lo       = temp_lo,
-                temp_hi       = temp_hi,
+                date_opened=ts[:10], bracket_label=bracket_label,
+                token_id=token_id, entry_ask=round(price, 4),
+                shares=shares, size_usdc=round(size_usdc, 2),
+                mode="real", order_id=result.order_id or "",
+                market_slug=market_slug,
             ))
         return result
 
-    # ── Venda / Fecho manual de posição ───────────────
+    # ── Venda / Fecho de posição ──────────────────────
 
-    def sell_yes(
-        self,
-        position: "Position",
-        bid_price: float,
-    ) -> "OrderResult":
-        """
-        Vende (fecha) uma posição YES existente ao bid actual.
-
-        Parâmetros
-        ----------
-        position  : Position aberta a fechar
-        bid_price : melhor bid do CLOB no momento (preço de venda)
-
-        Em PAPER: simula a venda e actualiza o P&L final.
-        Em REAL : envia ordem de venda ao CLOB.
-        """
+    def sell_yes(self, position: "Position", bid_price: float) -> "OrderResult":
         from datetime import datetime as _dt
         ts = _dt.now().isoformat()
 
         if position.status != PositionStatus.OPEN:
-            return OrderResult(
-                success=False, mode=self.mode,
-                error=f"Posição já fechada (status={position.status.value})",
-                timestamp=ts,
-            )
-
-        if not (TICK_SIZE <= bid_price <= 1 - TICK_SIZE):
-            return OrderResult(
-                success=False, mode=self.mode,
-                error=f"Bid {bid_price:.4f} fora do intervalo válido",
-                timestamp=ts,
-            )
+            return OrderResult(success=False, mode=self.mode,
+                               error=f"Posição já fechada ({position.status.value})", timestamp=ts)
 
         pnl_usd = round((bid_price - position.entry_ask) * position.shares, 2)
         pnl_pct = round((bid_price / position.entry_ask - 1) * 100, 2) if position.entry_ask else 0.0
 
         # ── PAPER MODE ────────────────────────────────
         if self.mode == TradingMode.PAPER:
-            position.status      = PositionStatus.WON if pnl_usd >= 0 else PositionStatus.LOST
-            position.pnl_usd     = pnl_usd
-            position.pnl_pct     = pnl_pct
+            position.status = PositionStatus.WON if pnl_usd >= 0 else PositionStatus.LOST
+            position.pnl_usd = pnl_usd
+            position.pnl_pct = pnl_pct
             position.current_mid = bid_price
             position.last_updated = ts
             self.positions._save()
-
-            result = OrderResult(
-                success   = True,
-                mode      = TradingMode.PAPER,
-                order_id  = f"PAPER-SELL-{int(time.time())}",
-                token_id  = position.token_id,
-                side      = "SELL",
-                outcome   = "YES",
-                price     = round(bid_price, 4),
-                size_usdc = round(bid_price * position.shares, 2),
-                shares    = position.shares,
-                status    = "SIMULATED_SELL",
-                timestamp = ts,
-                simulated = True,
+            return OrderResult(
+                success=True, mode=TradingMode.PAPER,
+                order_id=f"PAPER-SELL-{int(time.time())}",
+                token_id=position.token_id, side="SELL", outcome="YES",
+                price=round(bid_price, 4),
+                size_usdc=round(bid_price * position.shares, 2),
+                shares=position.shares, status="SIMULATED_SELL",
+                timestamp=ts, simulated=True,
             )
-            self._log_order(result, position.bracket_label)
-            return result
 
         # ── REAL MODE ─────────────────────────────────
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
-            from py_clob_client.order_builder.constants import SELL
+            from py_clob_client_v2 import OrderArgs, Side, OrderType, PartialCreateOrderOptions
 
             order_args = OrderArgs(
-                token_id = position.token_id,
-                price    = round(bid_price, 4),
-                size     = position.shares,
-                side     = SELL,
+                token_id=position.token_id,
+                price=round(bid_price, 4),
+                size=position.shares,
+                side=Side.SELL,
             )
-            signed_order = self._client.create_order(order_args)
-            response     = self._client.post_order(signed_order, OrderType.GTC)
-
+            response = self._client.create_and_post_order(
+                order_args=order_args,
+                options=PartialCreateOrderOptions(tick_size=str(TICK_SIZE)),
+                order_type=OrderType.GTC,
+            )
             order_id = response.get("orderID") or response.get("id") or "?"
-            status   = response.get("status", "unknown")
-            success  = status in ("matched", "live", "delayed")
+            status = response.get("status", "unknown")
+            success = status in ("matched", "live", "delayed")
 
             if success:
-                position.status       = PositionStatus.WON if pnl_usd >= 0 else PositionStatus.LOST
-                position.pnl_usd      = pnl_usd
-                position.pnl_pct      = pnl_pct
-                position.current_mid  = bid_price
+                position.status = PositionStatus.WON if pnl_usd >= 0 else PositionStatus.LOST
+                position.pnl_usd = pnl_usd
+                position.pnl_pct = pnl_pct
+                position.current_mid = bid_price
                 position.last_updated = ts
                 self.positions._save()
 
-            result = OrderResult(
-                success   = success,
-                mode      = TradingMode.REAL,
-                order_id  = order_id,
-                token_id  = position.token_id,
-                side      = "SELL",
-                outcome   = "YES",
-                price     = round(bid_price, 4),
-                size_usdc = round(bid_price * position.shares, 2),
-                shares    = position.shares,
-                status    = status,
-                timestamp = ts,
-                simulated = False,
-                error     = None if success else f"Status inesperado: {status}",
+            return OrderResult(
+                success=success, mode=TradingMode.REAL,
+                order_id=order_id, token_id=position.token_id,
+                side="SELL", outcome="YES",
+                price=round(bid_price, 4),
+                size_usdc=round(bid_price * position.shares, 2),
+                shares=position.shares, status=status,
+                timestamp=ts, simulated=False,
+                error=None if success else f"Status: {status}",
             )
-
         except Exception as e:
-            result = OrderResult(
+            logger.error("Falha fechar REAL: %s", e)
+            return OrderResult(
                 success=False, mode=TradingMode.REAL,
                 token_id=position.token_id, error=str(e),
                 timestamp=ts, simulated=False,
             )
-            logger.error("Falha ao fechar posição REAL: %s", e)
-
-        self._log_order(result, position.bracket_label)
-        return result
 
     # ── Saldo ──────────────────────────────────────────
 
     def get_usdc_balance(self) -> float | None:
-        """
-        Saldo USDC disponivel — le sig_type 0,1,2 e devolve o maior.
-        O saldo util para ordens esta tipicamente em sig_type=2.
-        """
         try:
-            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-            best = 0.0
-            for sig in [0, 1, 2]:
-                try:
-                    info = self._client.get_balance_allowance(
-                        params=BalanceAllowanceParams(
-                            asset_type=AssetType.COLLATERAL,
-                            signature_type=sig,
-                        )
-                    )
-                    bal = int(info.get("balance", "0")) / 1e6
-                    if bal > best:
-                        best = bal
-                except Exception:
-                    pass
-            return best if best > 0 else None
+            from py_clob_client_v2.clob_types import BalanceAllowanceParams, AssetType
+            info = self._client.get_balance_allowance(
+                params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+            return int(info.get("balance", "0")) / 1e6
         except Exception as e:
-            logger.warning("get_usdc_balance falhou: %s", e)
+            logger.error("get_usdc_balance falhou: %s", e)
             return None
+
+    def has_open_orders(self, token_id: str) -> bool:
+        try:
+            orders = self._client.get_open_orders()
+            return any(
+                o.get("asset_id") == token_id and o.get("status") in ("live", "delayed")
+                for o in orders
+            ) if orders else False
+        except Exception:
+            return False
 
     # ── Logging ────────────────────────────────────────
 
-    def _log_order(self, result: OrderResult, bracket_label: str = "") -> None:
+    def _log_order(self, result: OrderResult, bracket_label: str = ""):
         entry = result.to_dict()
         entry["bracket_label"] = bracket_label
         self._order_log.append(entry)
-
         log_path = self.log_dir / f"orders_{date.today()}.json"
         try:
             existing = json.loads(log_path.read_text()) if log_path.exists() else []
             existing.append(entry)
             log_path.write_text(json.dumps(existing, indent=2))
         except Exception as e:
-            logger.warning("Falha ao guardar log de ordem: %s", e)
+            logger.warning("Falha log: %s", e)
 
-    def order_log(self) -> list[dict]:
+    def order_log(self):
         return list(self._order_log)
 
 
@@ -784,81 +543,59 @@ class ClobClient:
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 
+
 class PositionStatus(Enum):
-    OPEN     = "open"
-    WON      = "won"
-    LOST     = "lost"
-    EXPIRED  = "expired"
-    UNKNOWN  = "unknown"
+    OPEN    = "open"
+    WON     = "won"
+    LOST    = "lost"
+    EXPIRED = "expired"
+    UNKNOWN = "unknown"
 
 
 @dataclass
 class Position:
-    """
-    Representa uma posição aberta ou fechada no Polymarket.
+    date_opened: str
+    bracket_label: str
+    token_id: str
+    entry_ask: float
+    shares: float
+    size_usdc: float
+    mode: str
+    order_id: str
+    market_slug: str = ""
+    temp_lo: float = 0.0
+    temp_hi: float = 0.0
+    current_mid: float | None = None
+    status: PositionStatus = PositionStatus.OPEN
+    pnl_usd: float | None = None
+    pnl_pct: float | None = None
+    last_updated: str = ""
 
-    Campos gravados no momento da compra (imutáveis):
-        date_opened, bracket_label, token_id, entry_ask,
-        shares, size_usdc, mode, order_id, market_slug,
-        temp_lo, temp_hi
-
-    Campos actualizados em tempo real:
-        current_mid, status, pnl_usd, pnl_pct, last_updated
-    """
-    date_opened:    str
-    bracket_label:  str
-    token_id:       str
-    entry_ask:      float
-    shares:         float
-    size_usdc:      float
-    mode:           str
-    order_id:       str
-    market_slug:    str = ""
-    temp_lo:        float = 0.0
-    temp_hi:        float = 0.0
-
-    current_mid:    float | None = None
-    status:         PositionStatus = PositionStatus.OPEN
-    pnl_usd:        float | None = None
-    pnl_pct:        float | None = None
-    last_updated:   str = ""
-
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
-            "date_opened":   self.date_opened,
-            "bracket_label": self.bracket_label,
-            "token_id":      self.token_id,
-            "entry_ask":     self.entry_ask,
-            "shares":        self.shares,
-            "size_usdc":     self.size_usdc,
-            "mode":          self.mode,
-            "order_id":      self.order_id,
-            "market_slug":   self.market_slug,
-            "temp_lo":       self.temp_lo,
-            "temp_hi":       self.temp_hi,
-            "current_mid":   self.current_mid,
-            "status":        self.status.value,
-            "pnl_usd":       self.pnl_usd,
-            "pnl_pct":       self.pnl_pct,
-            "last_updated":  self.last_updated,
+            "date_opened": self.date_opened, "bracket_label": self.bracket_label,
+            "token_id": self.token_id, "entry_ask": self.entry_ask,
+            "shares": self.shares, "size_usdc": self.size_usdc,
+            "mode": self.mode, "order_id": self.order_id,
+            "market_slug": self.market_slug,
+            "temp_lo": self.temp_lo, "temp_hi": self.temp_hi,
+            "current_mid": self.current_mid, "status": self.status.value,
+            "pnl_usd": self.pnl_usd, "pnl_pct": self.pnl_pct,
+            "last_updated": self.last_updated,
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Position":
+    def from_dict(cls, d):
         p = cls(
-            date_opened   = d["date_opened"],
-            bracket_label = d["bracket_label"],
-            token_id      = d.get("token_id", ""),
-            entry_ask     = float(d["entry_ask"]),
-            shares        = float(d["shares"]),
-            size_usdc     = float(d["size_usdc"]),
-            mode          = d.get("mode", "paper"),
-            order_id      = d.get("order_id", ""),
-            market_slug   = d.get("market_slug", ""),
-            temp_lo       = float(d.get("temp_lo", 0.0)),
-            temp_hi       = float(d.get("temp_hi", 0.0)),
-            current_mid   = d.get("current_mid"),
-            last_updated  = d.get("last_updated", ""),
+            date_opened=d["date_opened"], bracket_label=d["bracket_label"],
+            token_id=d.get("token_id", ""), entry_ask=float(d["entry_ask"]),
+            shares=float(d["shares"]), size_usdc=float(d["size_usdc"]),
+            mode=d.get("mode", "paper"), order_id=d.get("order_id", ""),
+            market_slug=d.get("market_slug", ""),
+            temp_lo=float(d.get("temp_lo", 0.0)),
+            temp_hi=float(d.get("temp_hi", 0.0)),
+            current_mid=d.get("current_mid"),
+            last_updated=d.get("last_updated", ""),
         )
         try:
             p.status = PositionStatus(d.get("status", "open"))
@@ -870,86 +607,93 @@ class Position:
 
 
 class PositionManager:
-    """
-    Gere o portfolio de posições abertas/fechadas.
-
-    PAPER: persiste tudo em  live_bot_logs/paper_positions.json
-    REAL:  persiste tudo em  live_bot_logs/real_positions.json
-           + tenta confirmar resolução via Gamma API
-    """
+    """Gere portfolio de posições abertas/fechadas com persistência em JSON."""
 
     def __init__(self, mode: TradingMode, log_dir: Path = Path("live_bot_logs")):
-        self.mode    = mode
+        self.mode = mode
         self.log_dir = log_dir
         self.log_dir.mkdir(exist_ok=True)
         fname = "paper_positions.json" if mode == TradingMode.PAPER else "real_positions.json"
-        self._path: Path = log_dir / fname
-        self._positions: list[Position] = self._load()
+        self._path = log_dir / fname
+        self._positions = self._load()
+        self._deduplicate()
 
-    def _load(self) -> list[Position]:
+    def _load(self):
         if not self._path.exists():
             return []
         try:
-            data = json.loads(self._path.read_text())
-            return [Position.from_dict(d) for d in data]
-        except Exception as e:
-            logger.warning("Falha ao carregar posições: %s", e)
+            return [Position.from_dict(d) for d in json.loads(self._path.read_text())]
+        except Exception:
             return []
 
-    def _save(self) -> None:
+    def _save(self):
         try:
-            self._path.write_text(
-                json.dumps([p.to_dict() for p in self._positions], indent=2)
-            )
-        except Exception as e:
-            logger.warning("Falha ao guardar posições: %s", e)
+            self._path.write_text(json.dumps([p.to_dict() for p in self._positions], indent=2))
+        except Exception:
+            pass
 
-    def add(self, position: Position) -> None:
+    def add(self, position: Position):
+        # Prevenir duplicados do mesmo dia
+        if any(p.status == PositionStatus.OPEN and p.date_opened == position.date_opened
+               and p.token_id == position.token_id
+               for p in self._positions):
+            return
         self._positions.append(position)
         self._save()
 
-    def open_positions(self) -> list[Position]:
+    def _deduplicate(self):
+        seen = set()
+        cleaned = []
+        changed = False
+        for p in reversed(self._positions):
+            if p.status == PositionStatus.OPEN:
+                key = (p.date_opened, p.token_id)
+                if key in seen:
+                    changed = True
+                    continue
+                seen.add(key)
+            cleaned.append(p)
+        if changed:
+            self._positions = list(reversed(cleaned))
+            self._save()
+
+    def open_positions(self):
         return [p for p in self._positions if p.status == PositionStatus.OPEN]
 
-    def all_positions(self) -> list[Position]:
+    def all_positions(self):
         return list(self._positions)
 
-    def today_position(self) -> Position | None:
+    def today_position(self):
         today = date.today().isoformat()
         for p in reversed(self._positions):
             if p.date_opened == today:
                 return p
         return None
 
-    def refresh(self, clob_client: "ClobClient | None") -> None:
+    def refresh(self, clob_client):
         from datetime import datetime as _dt
         now_str = _dt.now().isoformat()
-
         for pos in self.open_positions():
             mid = self._get_mid(pos, clob_client)
             if mid is not None:
                 pos.current_mid = round(mid, 4)
                 pos.pnl_usd = round((mid - pos.entry_ask) * pos.shares, 2)
                 pos.pnl_pct = round((mid / pos.entry_ask - 1) * 100, 2) if pos.entry_ask else None
-
             if self.mode == TradingMode.REAL and pos.market_slug:
                 resolved, won = self._check_resolution(pos)
                 if resolved:
                     if won:
-                        pos.status  = PositionStatus.WON
+                        pos.status = PositionStatus.WON
                         pos.pnl_usd = round((1.0 - pos.entry_ask) * pos.shares, 2)
                         pos.pnl_pct = round((1.0 / pos.entry_ask - 1) * 100, 2)
                     else:
-                        pos.status  = PositionStatus.LOST
+                        pos.status = PositionStatus.LOST
                         pos.pnl_usd = round(-pos.size_usdc, 2)
                         pos.pnl_pct = -100.0
-
             pos.last_updated = now_str
-
         self._save()
 
-    def _get_mid(self, pos: Position,
-                 clob_client: "ClobClient | None") -> float | None:
+    def _get_mid(self, pos, clob_client):
         if not clob_client or not pos.token_id:
             return None
         try:
@@ -960,122 +704,58 @@ class PositionManager:
             pass
         return None
 
-    def _check_resolution(self, pos: Position) -> tuple[bool, bool]:
+    def _check_resolution(self, pos):
         import requests as _req
         if not pos.market_slug:
             return False, False
         try:
-            r = _req.get(
-                f"{GAMMA_API}/events",
-                params={"slug": pos.market_slug},
-                timeout=10,
-            )
+            r = _req.get(f"{GAMMA_API}/events", params={"slug": pos.market_slug}, timeout=10)
             r.raise_for_status()
             events = r.json()
             if not events:
                 return False, False
             event = events[0] if isinstance(events, list) else events
-
             for m in event.get("markets", []):
-                token_ids_raw = m.get("clobTokenIds", "[]")
-                if isinstance(token_ids_raw, str):
+                tids = m.get("clobTokenIds", "[]")
+                if isinstance(tids, str):
                     try:
-                        token_ids_raw = json.loads(token_ids_raw)
+                        tids = json.loads(tids)
                     except Exception:
-                        token_ids_raw = []
-
-                if pos.token_id not in (token_ids_raw or []):
+                        tids = []
+                if pos.token_id not in (tids or []):
                     continue
-
                 if not m.get("resolved", False):
                     return False, False
-
                 winner = str(m.get("winner") or "").lower()
-                won = winner in ("yes", "true", "1")
-                return True, won
-
-        except Exception as e:
-            logger.warning("_check_resolution falhou: %s", e)
-
+                return True, winner in ("yes", "true", "1")
+        except Exception:
+            pass
         return False, False
 
     def resolve_closed_positions(self, current_date: date) -> None:
         """
-        Verifica se posições abertas de dias anteriores foram resolvidas
-        comparando a temperatura real contra o bracket de cada posição.
-
-        Em PAPER: usa temperatura atual de berlin_date().
-        Em REAL: verifica via Gamma API (já feito em refresh()).
+        Verifica se posições abertas de dias anteriores foram resolvidas.
+        Em PAPER: compara temperatura contra bracket. Em REAL: refresh() trata.
         """
         if self.mode == TradingMode.PAPER:
-            from munich_config import berlin_date, fetch_wu_latest, make_wu_session
-            from munich_weather import make_wu_session as _make_wu
-
-            today = current_date
-            if today == date.today():
-                # Ainda hoje — usar última observação WU
-                try:
-                    session = _make_wu()
-                    obs = fetch_wu_latest("", session)
-                    if obs:
-                        current_temp = obs.get("temp_c", 0)
-                    else:
-                        return
-                except Exception:
-                    return
-            else:
-                # Dias passados — não temos como obter a temperatura real em PAPER
-                # Sem WU API key seria muito lento. Para simplificar,
-                # usamos a temperatura que foi registrada no fechamento do dia.
-                # Nota: Isto é aproximado mas serve para PAPER.
-                return
-
             for pos in self.open_positions():
                 if pos.status != PositionStatus.OPEN:
                     continue
+                # Para multi-cidade, precisamos da temperatura da cidade.
+                # Este metodo e chamado pelo live_bot com contexto adicional.
+                # A resolucao em PAPER e feita pelo live_bot directamente.
+                pass
+        # Em REAL, o refresh() ja cuida
 
-                # Verificar se o bracket contém a temperatura final
-                bracket_lo = pos.temp_lo if hasattr(pos, 'temp_lo') else 0
-                bracket_hi = pos.temp_hi if hasattr(pos, 'temp_hi') else 99
-
-                # Se temos bracket_lo/hi na posição, usar isso
-                # Caso contrário, tentar extrair do label
-                if not hasattr(pos, 'temp_lo'):
-                    import re
-                    m = re.search(r'([-]?\d+)', pos.bracket_label)
-                    if m:
-                        bracket_lo = float(m.group(1))
-                        bracket_hi = float(m.group(1))
-                        if "or higher" in pos.bracket_label.lower():
-                            bracket_hi = 99
-                        elif "or lower" in pos.bracket_label.lower():
-                            bracket_lo = -99
-
-                won = False
-                if bracket_hi >= 99:
-                    won = current_temp >= bracket_lo
-                elif bracket_lo <= -99:
-                    won = current_temp <= bracket_hi
-                else:
-                    won = bracket_lo <= current_temp <= bracket_hi
-
-                pos.status = PositionStatus.WON if won else PositionStatus.LOST
-                pos.pnl_usd = round((1.0 - pos.entry_ask) * pos.shares, 2) if won else round(-pos.size_usdc, 2)
-                pos.pnl_pct = round((1.0 / pos.entry_ask - 1) * 100, 2) if won else -100.0
-                pos.last_updated = str(current_date)
-
-            self._save()
-        # Em REAL, o refresh() já cuida disso
-
-    def pnl_summary(self) -> dict:
+    def pnl_summary(self):
         invested = sum(p.size_usdc for p in self._positions)
-        pnl_sum  = sum(p.pnl_usd for p in self._positions if p.pnl_usd is not None)
+        pnl_sum = sum(p.pnl_usd for p in self._positions if p.pnl_usd is not None)
         return {
             "total_invested": round(invested, 2),
-            "total_pnl_usd":  round(pnl_sum, 2),
-            "total_pnl_pct":  round(pnl_sum / invested * 100, 2) if invested else 0.0,
-            "n_open":    sum(1 for p in self._positions if p.status == PositionStatus.OPEN),
-            "n_won":     sum(1 for p in self._positions if p.status == PositionStatus.WON),
-            "n_lost":    sum(1 for p in self._positions if p.status == PositionStatus.LOST),
+            "total_pnl_usd": round(pnl_sum, 2),
+            "total_pnl_pct": round(pnl_sum / invested * 100, 2) if invested else 0.0,
+            "n_open": sum(1 for p in self._positions if p.status == PositionStatus.OPEN),
+            "n_won": sum(1 for p in self._positions if p.status == PositionStatus.WON),
+            "n_lost": sum(1 for p in self._positions if p.status == PositionStatus.LOST),
             "n_unknown": sum(1 for p in self._positions if p.status == PositionStatus.UNKNOWN),
         }

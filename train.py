@@ -242,6 +242,94 @@ def walk_forward_auc(dataset: pd.DataFrame, params: dict, min_train_years: int =
     return {"per_year": per_year, "mean_auc": mean}
 
 
+def run_training(city_name: str, no_wf: bool = False, quiet: bool = False) -> dict | None:
+    """
+    Treina modelo para 1 cidade. Função reutilizável para wrappers.
+
+    Args:
+        city_name: nome da cidade
+        no_wf: se True, pula walk-forward
+        quiet: se True, suprime alguns prints
+
+    Returns:
+        dict com:
+            mean_auc_wf, in_sample_auc, n_features, n_rows, model_dir, ...
+        ou None em caso de erro.
+    """
+    try:
+        city = get_city(city_name)
+        set_city(city_name)
+
+        csv_path = Path(city.csv_path)
+        if not csv_path.exists():
+            if not quiet:
+                _console.print(f"  [red][{city_name}] CSV não encontrado: {csv_path}[/red]")
+            return None
+
+        if not quiet:
+            _console.print(f"  [{city_name}] Loading CSV: {csv_path}")
+        df = load_csv(csv_path)
+
+        if not quiet:
+            _console.print(f"  [{city_name}] Building dataset ({len(df):,} raw rows)...")
+        dataset, prior_map = build_dataset(df, city)
+
+        LGB_PARAMS = {
+            "n_estimators": 600,
+            "learning_rate": 0.02,
+            "max_depth": 6,
+            "num_leaves": 60,
+        }
+
+        wf_result = {"per_year": {}, "mean_auc": None}
+        if not no_wf:
+            if not quiet:
+                _console.print(f"  [{city_name}] Walk-forward...")
+            wf_result = walk_forward_auc(dataset, LGB_PARAMS, min_train_years=2)
+
+        # Fit final
+        from lightgbm import LGBMClassifier
+        lgb = LGBMClassifier(**LGB_PARAMS, random_state=42, verbose=-1)
+        X = dataset[FEATURE_COLS].fillna(0)
+        y = dataset["label"]
+        lgb.fit(X, y)
+
+        in_sample_auc = float(roc_auc_score(y, lgb.predict_proba(X)[:, 1]))
+
+        # Save
+        model_dir = Path(city.model_dir)
+        model_dir.mkdir(exist_ok=True)
+        joblib.dump(lgb, model_dir / "lgbm_peak.pkl")
+
+        config = {
+            "feature_cols": FEATURE_COLS,
+            "lgb_params": LGB_PARAMS,
+            "ensemble_weights": {"lgbm": 1.0, "xgb": 0.0, "zscore": 0.0},
+            "model_type": "lightgbm_pure",
+            "global_auc": wf_result["mean_auc"] if wf_result["mean_auc"] is not None else in_sample_auc,
+            "mean_auc_wf": wf_result["mean_auc"],
+            "in_sample_auc": in_sample_auc,
+            "per_year_auc_wf": {str(y): a for y, a in wf_result["per_year"].items()},
+            "seasonal_peak_prior": {f"{k[0]}_{k[1]}_{k[2]}": float(v) for k, v in prior_map.items()},
+        }
+        (model_dir / "peak_model_config.json").write_text(json.dumps(config, indent=2))
+
+        return {
+            "city":            city_name,
+            "model_dir":       str(model_dir),
+            "mean_auc_wf":     wf_result["mean_auc"],
+            "in_sample_auc":   in_sample_auc,
+            "per_year_auc_wf": wf_result["per_year"],
+            "n_rows":          len(dataset),
+            "n_features":      len(FEATURE_COLS),
+        }
+
+    except Exception as e:
+        if not quiet:
+            _console.print(f"  [red][{city_name}] Training failed: {e}[/red]")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Treinador multi-cidade")
     parser.add_argument("--city", type=str, default="munich", choices=list(CITIES.keys()),

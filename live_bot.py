@@ -11,6 +11,7 @@ Uso:
 import argparse
 import json
 import time
+import requests
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone as _tz, timedelta
 from pathlib import Path
@@ -24,9 +25,16 @@ from weather import (
     make_wu_session, make_om_session, fetch_wu_latest, fetch_wu_forecast_max,
     fetch_om_forecast_max, fetch_om_hourly_today, forecasts_agree,
 )
-from phased_entry import SingleEntry
-from polymarket_clob import ClobClient, TradingMode
+from modules.strategy_factory import create_strategy
+from polymarket_clob import ClobClient, TradingMode, GAMMA_API
 from zoneinfo import ZoneInfo
+
+# ── Month names para Polymarket slug (usado em todos os eventos)
+MONTH_NAMES = {
+    1: "january", 2: "february", 3: "march", 4: "april", 5: "may",
+    6: "june", 7: "july", 8: "august", 9: "september", 10: "october",
+    11: "november", 12: "december",
+}
 
 # ANSI
 R = "\033[0m"
@@ -43,6 +51,175 @@ LOG_DIR.mkdir(exist_ok=True)
 
 PARCEL_SIZE = 5.0
 
+# ════════════════════════════════════════════════════
+#  POLYMARKET FETCHER
+# ════════════════════════════════════════════════════
+
+class PolymarketFetcher:
+    """Fetch do Polymarket API para obter mercado de temperatura."""
+
+    def __init__(self, city_config: CityConfig):
+        self.city = city_config
+
+    def date_to_slug(self, d: date) -> str:
+        """Gera o slug do mercado para a data."""
+        month_name = MONTH_NAMES[d.month]
+        return f"{self.city.polymarket_slug_pfx}-{month_name}-{d.day}-{d.year}"
+
+    def fetch_market(self, d: date) -> Optional[dict]:
+        """Busca o mercado do Polymarket para a data."""
+        import requests
+
+        slug = self.date_to_slug(d)
+
+        def _try(params):
+            try:
+                r = requests.get(f"{GAMMA_API}/events", params=params, timeout=15)
+                r.raise_for_status()
+                ev = r.json()
+                return ev if isinstance(ev, list) else ([ev] if ev else [])
+            except Exception:
+                return []
+
+        # Tentativas com diferentes queries
+        month_name = MONTH_NAMES[d.month].capitalize()
+        events = (
+            _try({"slug": slug}) or
+            _try({"q": f"highest temperature {self.city.name} {month_name} {d.day} {d.year}", "limit": 10}) or
+            _try({"q": f"{self.city.name} temperature {d.year}", "limit": 10})
+        )
+
+        if not events:
+            return None
+
+        # Filtrar eventos relevantes (contendo nome da cidade e temperatura)
+        city_lower = self.city.name.lower()
+        def is_relevant(e):
+            t = str(e.get("title", "")).lower()
+            return (city_lower in t or "temperature" in t or "highest" in t)
+
+        relevant = [e for e in events if isinstance(e, dict) and is_relevant(e)]
+        if not relevant:
+            return None
+
+        event = max(relevant, key=lambda e: float(e.get("volume", 0) or 0))
+        brackets = []
+
+        for m in event.get("markets", []):
+            raw_label = (m.get("groupItemTitle") or m.get("outcomeTitle") or
+                         m.get("title") or m.get("question") or "")
+            label = self._normalize_label(raw_label)
+            v = self._extract_temp(label)
+            if v is None:
+                continue
+
+            def _jload(x):
+                if isinstance(x, str):
+                    try: return json.loads(x)
+                    except: return []
+                return x
+
+            outcomes = _jload(m.get("outcomes", "[]"))
+            prices = _jload(m.get("outcomePrices", "[]"))
+            token_ids = _jload(m.get("clobTokenIds", []))
+
+            price_yes, token_yes = None, None
+            for i, out in enumerate(outcomes):
+                if str(out).lower() in ("yes", "true", "1"):
+                    price_yes = float(prices[i]) if i < len(prices) and prices[i] else None
+                    token_yes = token_ids[i] if i < len(token_ids) else None
+                    break
+
+            if price_yes is None and prices:
+                try: price_yes = float(prices[0])
+                except: price_yes = 0.5
+            if price_yes is None:
+                continue
+
+            brackets.append({
+                "label": label,
+                "price": round(price_yes, 4),
+                "ask": round(price_yes, 4),
+                "token_id": token_yes,
+                "temp_lo": self._bracket_lo(label),
+                "temp_hi": self._bracket_hi(label),
+                "volume": float(m.get("volume", 0) or 0),
+            })
+
+        if not brackets:
+            return None
+
+        brackets.sort(key=lambda b: b["temp_lo"])
+        return {
+            "title": event.get("title", f"{self.city.name} Max Temp"),
+            "end_date": event.get("endDate", ""),
+            "volume": float(event.get("volume", 0) or 0),
+            "brackets": brackets,
+            "n_outcomes": len(brackets),
+            "slug": slug,
+        }
+
+    def _extract_temp(self, text: str) -> Optional[float]:
+        """Extrai temperatura de um label."""
+        import re
+        for pat in [r"([-]?\d+)\s*°?\s*[cC]\b", r"([-]?\d+)\s+or\s+(?:higher|lower|above|below)",
+                    r"be\s+([-]?\d+)", r"^\s*([-]?\d+)\s*$"]:
+            m = re.search(pat, str(text), re.IGNORECASE)
+            if m:
+                return float(m.group(1))
+        return None
+
+    def _bracket_lo(self, label: str) -> float:
+        v = self._extract_temp(label)
+        if v is None: return 0.0
+        s = str(label).lower()
+        return -99.0 if any(x in s for x in ("or lower", "or below", "<=")) else v
+
+    def _bracket_hi(self, label: str) -> float:
+        v = self._extract_temp(label)
+        if v is None: return 99.0
+        s = str(label).lower()
+        return 99.0 if any(x in s for x in ("or higher", "or above", ">=", "≥")) else v
+
+    def _normalize_label(self, text: str) -> str:
+        """Normaliza o label do bracket."""
+        if len(text) <= 25:
+            return text
+        v = self._extract_temp(text)
+        if v is None:
+            return text
+        s = text.lower()
+        if any(x in s for x in ("higher", "above", ">=", "≥")):
+            return f"{v:.0f}°C or higher"
+        if any(x in s for x in ("lower", "below", "<=", "≤")):
+            return f"{v:.0f}°C or lower"
+        return f"{v:.0f}°C"
+
+    @staticmethod
+    def find_bracket(market: dict, temp: float, forecast_max: float = None) -> Optional[dict]:
+        """Encontra o bracket mais próximo da temperatura."""
+        if not market:
+            return None
+        if forecast_max is not None:
+            target = int(round(forecast_max))
+        else:
+            target = int(np.floor(temp))
+
+        for b in market["brackets"]:
+            lo, hi = b["temp_lo"], b["temp_hi"]
+            if lo == hi and target == round(lo):
+                return b
+            if hi >= 99 and target >= lo:
+                return b
+            if lo <= -99 and target <= hi:
+                return b
+            if lo <= target <= hi:
+                return b
+
+        # Fallback: bracket mais próximo
+        min_b = min(market["brackets"],
+                    key=lambda b: abs((b["temp_lo"] + b["temp_hi"]) / 2 - target))
+        return min_b
 
 # ════════════════════════════════════════════════════
 #  DATACLASSES
@@ -69,12 +246,14 @@ class CityState:
     """Estado de uma cidade no bot multi-cidade."""
     city: CityConfig
     models: dict
+    strategy_mode: str = "single"  # "single", "dual"
     slots_so_far: list[dict] = field(default_factory=list)
     series_today: dict[tuple, float] = field(default_factory=dict)
     cloud_by_hour: dict[int, int] = field(default_factory=dict)
     history_max: dict = field(default_factory=dict)
-    entry: SingleEntry | None = None
+    entry: any = None  # SingleEntry ou DualStrategy
     market: dict | None = None
+    fetcher: PolymarketFetcher | None = None
     wu_key: str = ""
     wu_sess = None
     om_sess = None
@@ -83,6 +262,8 @@ class CityState:
     latest_obs: dict | None = None
     last_forecast_min: int = -1
     last_market_min: int = -1
+    last_wu_forecast_max: int | None = None
+    last_om_forecast_max: int | None = None
 
 
 # ════════════════════════════════════════════════════
@@ -121,9 +302,81 @@ def _save_daily_stats(stats: DailyStats, city_name: str) -> None:
     log_path.write_text(json.dumps(data, indent=2))
 
 
+def _get_tg():
+    """Singleton lazy de tg.TG() — None se Telegram não configurado."""
+    if not hasattr(_get_tg, "_instance"):
+        try:
+            from tg import TG
+            _get_tg._instance = TG()
+        except Exception:
+            _get_tg._instance = None
+    return _get_tg._instance
+
+
 def _tg_alert(msg: str) -> None:
-    """Placeholder para notificações Telegram."""
+    """Alerta genérico (texto livre) — fallback quando não há método dedicado."""
     print(f"[TG] {msg}")
+    tg = _get_tg()
+    if tg:
+        try:
+            tg.send(msg)
+        except Exception:
+            pass
+
+
+def _tg_alert_order_placed(bet_record: dict, trading_mode_str: str) -> None:
+    """Alerta de ordem colocada com identificação de cidade e estratégia."""
+    city_name = bet_record.get("city", "?")
+    print(f"[TG] {city_name}: Bought {bet_record.get('bracket')} @ "
+          f"{bet_record.get('ask', 0)*100:.1f}¢")
+    tg = _get_tg()
+    if tg:
+        try:
+            # Adicionar tag de cidade ao bracket label se não estiver presente
+            label = bet_record.get("bracket_label", "")
+            if city_name and not label.startswith(f"[{city_name}]"):
+                bet_with_city = dict(bet_record)
+                bet_with_city["bracket_label"] = f"[{city_name}] {label}"
+                tg.alert_order_placed(bet_with_city, trading_mode_str)
+            else:
+                tg.alert_order_placed(bet_record, trading_mode_str)
+        except Exception as e:
+            print(f"[TG] alert failed: {e}")
+
+
+def _tg_alert_stop_loss_triggered(city_name: str, position: dict, current_temp: float,
+                                   bid_price: float, realized_pnl: float) -> None:
+    """Alerta de stop-loss disparado com identificação de cidade."""
+    tg = _get_tg()
+    if tg:
+        try:
+            pos_with_city = dict(position)
+            pos_with_city["bracket_label"] = f"[{city_name}] " + str(
+                position.get("bracket_label", position.get("bracket", "?"))
+            )
+            tg.alert_stop_loss_triggered(
+                position=pos_with_city, current_temp=current_temp,
+                bid_price=bid_price, realized_pnl=realized_pnl,
+            )
+        except Exception as e:
+            print(f"[TG] stop_loss_triggered failed: {e}")
+
+
+def _tg_alert_stop_loss_blocked(city_name: str, position: dict, current_temp: float,
+                                 reason: str) -> None:
+    """Alerta de stop-loss bloqueado com identificação de cidade."""
+    tg = _get_tg()
+    if tg:
+        try:
+            pos_with_city = dict(position)
+            pos_with_city["bracket_label"] = f"[{city_name}] " + str(
+                position.get("bracket_label", position.get("bracket", "?"))
+            )
+            tg.alert_stop_loss_blocked(
+                position=pos_with_city, current_temp=current_temp, reason=reason,
+            )
+        except Exception as e:
+            print(f"[TG] stop_loss_blocked failed: {e}")
 
 
 # ════════════════════════════════════════════════════
@@ -158,6 +411,30 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             print(f"  {C['yellow']}OM fetch failed: {e}{R}")
 
     state.latest_obs = new_obs
+
+    # Fetch forecasts para Dual Strategy (apenas WU/OM, a cada hora)
+    wu_forecast_max = None
+    om_forecast_max = None
+
+    if state.strategy_mode == "dual" and city.wu_history_path:
+        h_now = city_now(city).hour
+        m_now = city_now(city).minute
+
+        # Fetch forecasts a cada hora (minutos 0-5)
+        if state.last_forecast_min != h_now and m_now < 5:
+            try:
+                wu_forecast_max = fetch_wu_forecast_max(city, state.wu_key, state.wu_sess)
+                om_forecast_max = fetch_om_forecast_max(city, state.om_sess)
+
+                state.last_wu_forecast_max = wu_forecast_max
+                state.last_om_forecast_max = om_forecast_max
+                state.last_forecast_min = h_now
+            except Exception as e:
+                print(f"  {C['yellow']}Forecast fetch failed: {e}{R}")
+        else:
+            # Usar forecast cacheado
+            wu_forecast_max = state.last_wu_forecast_max
+            om_forecast_max = state.last_om_forecast_max
 
     # Atualizar slots
     if new_obs:
@@ -195,6 +472,75 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     from predictor import update_history_max, init_history_max
     update_history_max(state.history_max, state.slots_so_far, city.name)
 
+    # Fetch market (a cada 10 minutos ou se não existe)
+    h_now = city_now(city).hour
+    m_now = city_now(city).minute
+    if state.last_market_min != h_now and m_now < 10:
+        try:
+            state.market = state.fetcher.fetch_market(city_today)
+            if state.market and state.clob:
+                state.market["brackets"] = [state.clob.enrich_bracket(b)
+                                               for b in state.market["brackets"]]
+            state.last_market_min = h_now
+        except Exception as e:
+            print(f"  {C['yellow']}{city.name}: Fetch market failed: {e}{R}")
+
+    # ── Anti-duplicado: verificar DUAS fontes ──
+    if state.strategy_mode in ("single", "dual") and state.entry and state.clob:
+        _skip = False
+        _rec = None
+
+        # Fonte 1: arquivo bets_{date}.json
+        bets_path = LOG_DIR / f"bets_{city.name}_{city_today}.json"
+        if bets_path.exists():
+            try:
+                existing_bets = json.loads(bets_path.read_text())
+                if existing_bets:
+                    _skip = True
+                    first = existing_bets[0]
+                    _rec = {
+                        "ask": first.get("ask"),
+                        "temp_hi": first.get("temp_hi"),
+                        "temp_lo": first.get("temp_lo"),
+                        "token_id": first.get("token_id"),
+                        "size_usdc": first.get("bet_size"),
+                        "strategy": first.get("strategy"),
+                    }
+            except Exception:
+                pass
+
+        # Fonte 2: CLOB positions
+        if not _skip:
+            try:
+                _existing = [p for p in state.clob.positions.open_positions()
+                             if str(p.date_opened) == str(city_today)
+                             or str(p.date_opened) == city_today.isoformat()]
+                if _existing:
+                    _skip = True
+                    _pos = _existing[0]
+                    _rec = {
+                        "ask": getattr(_pos, 'entry_ask', None),
+                        "temp_hi": getattr(_pos, 'temp_hi', None),
+                        "temp_lo": getattr(_pos, 'temp_lo', None),
+                        "token_id": getattr(_pos, 'token_id', None),
+                        "size_usdc": getattr(_pos, 'size_usdc', None),
+                        "strategy": (
+                            "forecast_early"
+                            if "FORECAST" in getattr(_pos, 'bracket_label', '').upper()
+                            else "peak_detection"
+                        ),
+                    }
+            except Exception:
+                pass
+
+        if _skip and _rec and state.entry:
+            state.entry.bought = True
+            state.entry.record = _rec
+            if hasattr(state.entry, 'strategy_used'):
+                state.entry.strategy_used = _rec.get("strategy")
+            print(f"  {C['yellow']}{city.name}: Posição existente detectada "
+                  f"— a saltar entrada{R}")
+
     # Predição e entrada
     h_now = city_now(city).hour
     m_now = city_now(city).minute
@@ -227,45 +573,221 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
     # Trade decision
     if state.entry and state.market and state.clob:
-        if h_cur >= (city.hour_min or 6) and p_ensemble >= (city.threshold or 0.55):
-            if not state.entry.bought:
-                rmax = max(s["temp_c"] for s in state.slots_so_far)
-                bracket = next((b for b in state.market["brackets"]
-                               if b["temp_lo"] <= rmax <= b["temp_hi"]), None)
-                if bracket:
-                    bet = {
-                        "city": city.name,
-                        "bracket": bracket["label"],
-                        "ask": bracket["ask"],
-                        "size": PARCEL_SIZE,
-                        "time": city_now(city).isoformat(),
-                    }
+        running_max = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else 0.0
 
-                    if trading_mode_str == "real":
-                        state.entry.bought = state.clob.buy_yes(
-                            market_slug=f"{city.polymarket_slug_pfx}-{city_today}",
-                            ask=bracket["ask"],
-                            shares=int(PARCEL_SIZE / bracket["ask"]),
-                        )
-                        if state.entry.bought:
-                            stats.trades.append(bet)
-                            stats.total_invested += bet["ask"] * PARCEL_SIZE
+        # Forecast agreement (não usado em single/dual, mantido para compatibilidade)
+        forecast_agreement = None
+        if city.wu_history_path and wu_forecast_max:
+            om_max = om_forecast_max if om_forecast_max else wu_forecast_max
+            forecast_agreement = forecasts_agree(wu_forecast_max, om_max)
+
+        # Avaliar estratégia
+        if state.strategy_mode == "dual":
+            actions = state.entry.evaluate(
+                p_peak=p_ensemble,
+                hour=h_cur,
+                market=state.market,
+                running_max=running_max,
+                wu_forecast_max=wu_forecast_max,
+                om_forecast_max=om_forecast_max,
+                cloud_cover=state.cloud_by_hour.get(h_cur, 50),
+                humidity=state.latest_obs.get("humidity", 70) if state.latest_obs else 70,
+                month=city_today.month,
+                uv_index=state.latest_obs.get("uv_index", 3) if state.latest_obs else 3,
+            )
+        else:
+            # SingleEntry e DualStrategy
+            actions = state.entry.evaluate(
+                p_ensemble=p_ensemble,
+                hour=h_cur,
+                market=state.market,
+                running_max=running_max,
+                forecast_agreement=forecast_agreement,
+            )
+
+        # Processar ações (primeira que tenha size > 0)
+        for action in actions:
+            if action.get("size_usdc", 0) > 0:
+                bracket = action.get("bracket")
+                if not bracket:
+                    continue
+
+                ask = bracket.get("ask") or bracket.get("price", 1.0)
+                size_usdc = action["size_usdc"]
+                token_id = bracket.get("token_id")
+
+                # bet_record completo (campos necessários para stop-loss + tracking)
+                bet_record = {
+                    "city":          city.name,
+                    "bracket":       bracket["label"],
+                    "bracket_label": bracket["label"],
+                    "ask":           ask,
+                    "size_usdc":     size_usdc,
+                    "bet_size":      size_usdc,         # alias para compat
+                    "shares":        size_usdc / ask if ask > 0 else 0,
+                    "temp_lo":       bracket.get("temp_lo"),
+                    "temp_hi":       bracket.get("temp_hi"),
+                    "token_id":      token_id,
+                    "time":          city_now(city).isoformat(),
+                    "timestamp":     city_now(city).isoformat(),
+                    "strategy":      action.get("strategy") or state.strategy_mode,
+                }
+
+                if trading_mode_str == "real":
+                    if not token_id:
+                        print(f"  {C['red']}{city.name} BUY FALHOU: token_id em falta no bracket{R}")
+                        break
+
+                    market_slug = f"{city.polymarket_slug_pfx}-{city_today}"
+                    bracket_lbl_full = (
+                        f"{action['strategy'].upper()}: {bracket['label']}"
+                        if action.get("strategy")
+                        else bracket["label"]
+                    )
+
+                    result = state.clob.buy_yes(
+                        token_id=token_id,
+                        price=ask,
+                        size_usdc=size_usdc,
+                        bracket_label=bracket_lbl_full,
+                        market_slug=market_slug,
+                    )
+
+                    if result.success:
+                        bet_record["order_id"] = result.order_id
+                        bet_record["status"] = result.status
+                        bet_record["simulated"] = result.simulated
+                        state.entry.mark_bought(0, bet_record)
+                        stats.trades.append(bet_record)
+                        stats.total_invested += size_usdc
+                        print(f"  {C['green']}{city.name.upper()} BUY: {bracket['label']} "
+                              f"@ {ask*100:.1f}¢  ${size_usdc:.2f}  ({action['reason']}){R}")
+                        _tg_alert_order_placed(bet_record, trading_mode_str)
                     else:
-                        stats.trades.append(bet)
-                        stats.total_invested += bet["ask"] * PARCEL_SIZE
-                        state.entry.bought = True
+                        err = result.error or result.status
+                        print(f"  {C['red']}{city.name.upper()} BUY REJEITADO: {err}{R}")
+                else:
+                    # PAPER mode
+                    bet_record["order_id"] = f"PAPER-{int(time.time())}"
+                    bet_record["status"] = "SIMULATED"
+                    bet_record["simulated"] = True
+                    state.entry.mark_bought(0, bet_record)
+                    stats.trades.append(bet_record)
+                    stats.total_invested += size_usdc
+                    print(f"  {C['yellow']}{city.name.upper()} BUY [PAPER]: {bracket['label']} "
+                          f"@ {ask*100:.1f}¢  ${size_usdc:.2f}  ({action['reason']}){R}")
+                    _tg_alert_order_placed(bet_record, trading_mode_str)
 
-                    print(f"  {C['green']}{city.name.upper()} BUY: {bracket['label']} @ {bracket['ask']:.2f} (P={p_ensemble:.2f}){R}")
-                    _tg_alert(f"{city.name}: Bought {bracket['label']} @ {bracket['ask']:.2f}")
+                break  # Apenas uma ação por tick
+
+    # ─── STOP-LOSS CHECK ────────────────────────────
+    if state.strategy_mode in ("single", "dual") and state.entry and state.clob and state.latest_obs:
+        current_temp = state.latest_obs["temp_c"]
+        if hasattr(state.entry, 'check_stop_loss'):
+            stop_signal = state.entry.check_stop_loss(current_temp)
+            if stop_signal and state.market:
+                pos = stop_signal["position"]
+                # Throttle: só alertar 1× por trigger (evita spam)
+                _already_alerted = getattr(state.entry, '_stop_loss_blocked_alerted', False)
+
+                matching = [b for b in state.market.get("brackets", [])
+                            if b.get("temp_lo") == pos.get("temp_lo")
+                            and b.get("temp_hi") == pos.get("temp_hi")]
+
+                # ── Caso 1: bracket desapareceu do mercado ──
+                if not matching:
+                    if not _already_alerted:
+                        print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                        print(f"  {C['red']}   BLOQUEADO: bracket {pos.get('label','?')} "
+                              f"sem match no mercado actual{R}")
+                        _tg_alert_stop_loss_blocked(
+                            city.name, pos, current_temp,
+                            reason="bracket sem match no mercado",
+                        )
+                        state.entry._stop_loss_blocked_alerted = True
+                else:
+                    bracket = matching[0]
+                    bid_price = bracket.get("bid")
+
+                    # ── Caso 2: bid muito baixo ou ausente ──
+                    if not bid_price or bid_price < 0.02:
+                        if not _already_alerted:
+                            bid_str = f"{bid_price*100:.2f}¢" if bid_price else "—"
+                            print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                            print(f"  {C['yellow']}   BLOQUEADO: bid={bid_str} "
+                                  f"(< 2¢, não vale vender) — deixar expirar{R}")
+                            _tg_alert_stop_loss_blocked(
+                                city.name, pos, current_temp,
+                                reason=f"bid muito baixo ({bid_str})",
+                            )
+                            state.entry._stop_loss_blocked_alerted = True
+                    else:
+                        # ── Caso 3: bid OK, tentar vender ──
+                        poll = [p for p in state.clob.positions.open_positions()
+                                if p.token_id == pos.get("token_id")]
+
+                        # ── Caso 3a: posição não encontrada no CLOB ──
+                        if not poll:
+                            if not _already_alerted:
+                                tid = pos.get("token_id") or ""
+                                tid_short = tid[:16] + "..." if tid else "?"
+                                print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                                print(f"  {C['red']}   BLOQUEADO: posição "
+                                      f"token_id={tid_short} "
+                                      f"não encontrada no CLOB{R}")
+                                _tg_alert_stop_loss_blocked(
+                                    city.name, pos, current_temp,
+                                    reason="posição não encontrada no CLOB",
+                                )
+                                state.entry._stop_loss_blocked_alerted = True
+                        else:
+                            # ── Caso 3b: tentar vender ──
+                            sell_result = state.clob.sell_yes(poll[0], bid_price)
+                            if sell_result.success:
+                                entry_ask = pos.get("ask", 0)
+                                shares = pos.get("size_usdc", 0) / entry_ask if entry_ask > 0 else 0
+                                realized_pnl = shares * bid_price - pos.get("size_usdc", 0)
+
+                                state.entry.mark_sold_by_stop(bid_price, realized_pnl)
+                                stats.stop_losses_triggered += 1
+
+                                print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                                print(f"  {C['yellow']}   Vendido @ {bid_price:.4f}, "
+                                      f"PnL={realized_pnl:+.2f}{R}")
+
+                                _tg_alert_stop_loss_triggered(
+                                    city.name, pos, current_temp,
+                                    bid_price=bid_price, realized_pnl=realized_pnl,
+                                )
+                            else:
+                                # ── Caso 3c: ordem de venda falhou ──
+                                if not _already_alerted:
+                                    err = getattr(sell_result, 'error', None) or 'erro desconhecido'
+                                    print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                                    print(f"  {C['red']}   FALHA na venda @ {bid_price:.4f}: {err}{R}")
+                                    _tg_alert_stop_loss_blocked(
+                                        city.name, pos, current_temp,
+                                        reason=f"sell_yes falhou: {err}",
+                                    )
+                                    state.entry._stop_loss_blocked_alerted = True
+    # ───────────────────────────────────────────────────────
 
     # Display simples
     if state.latest_obs:
         rmax = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else state.latest_obs["temp_c"]
+
+        # Mostrar forecast para Dual Strategy
+        fc_str = ""
+        if state.strategy_mode == "dual" and wu_forecast_max:
+            fc_str = f"FC: {wu_forecast_max}°C | "
+
         print(f"{C['cyan']}{city.name.upper():<8}{R} "
               f"{h_cur:02d}:{s30_cur:02d} | "
               f"Temp: {state.latest_obs['temp_c']:>5.1f}°C | "
               f"RMax: {rmax:>5.1f}°C | "
+              f"{fc_str}"
               f"P: {p_ensemble:>4.2f} | "
+              f"Mode: {state.strategy_mode.upper()[0]} | "
               f"Bought: {state.entry.bought if state.entry else 'No'}")
 
     _save_daily_stats(stats, city.name)
@@ -280,10 +802,10 @@ def main():
     parser = argparse.ArgumentParser(description="Live Bot Multi-Cidade")
     parser.add_argument("--cities", type=str, default="munich",
                         help="Cidades separadas por vírgula (ex: munich,dallas)")
-    parser.add_argument("--mode", type=str, default="single", choices=["single"],
-                        help="Modo de entrada (apenas single implementado)")
+    parser.add_argument("--mode", type=str, default="single", choices=["single", "dual"],
+                        help="Modo de estratégia: single, dual")
     parser.add_argument("--run", type=str, default="paper", choices=["paper", "real"],
-                        help="Modo de execução")
+                        help="Modo de execução: paper, real")
     parser.add_argument("--interval", type=int, default=30,
                         help="Intervalo em segundos entre ticks")
     args = parser.parse_args()
@@ -307,10 +829,15 @@ def main():
         set_city(city_name)
         models = load_models(city_name)
 
+        # Criar estratégia usando factory
+        entry = create_strategy(city, mode=args.mode, parcel_size=PARCEL_SIZE)
+
         state = CityState(
             city=city,
+            strategy_mode=args.mode,
             models=models,
-            entry=SingleEntry(parcel_size=PARCEL_SIZE),
+            entry=entry,
+            fetcher=PolymarketFetcher(city),
         )
 
         # WU API key (de environment)
@@ -346,22 +873,45 @@ def main():
     print(f"{DIM}Loop iniciado — Ctrl+C para parar{R}")
     print()
 
+    # ── Fix #5: em REAL mode, bankroll = saldo USDC real (não o --bankroll arg) ──
+    city_bankrolls = {}  # Armazenar bankroll por cidade
+    default_bankroll = PARCEL_SIZE * 100  # $500 default para PAPER
+    for city_name in city_names:
+        state = states[city_name]
+        if state.clob and trading_mode == TradingMode.REAL:
+            try:
+                usdc_balance = state.clob.get_usdc_balance()
+                if usdc_balance is not None:
+                    city_bankrolls[city_name] = usdc_balance
+                    print(f"  {C['green']}{city.name}: USDC Balance = ${usdc_balance:.2f}{R}")
+                else:
+                    city_bankrolls[city_name] = default_bankroll
+            except Exception as e:
+                print(f"  {C['yellow']}{city.name}: Erro ao obter saldo: {e}{R}")
+                city_bankrolls[city_name] = default_bankroll
+        else:
+            # PAPER mode ou sem CLOB: usar default
+            city_bankrolls[city_name] = default_bankroll
+    print()
+
     try:
         while True:
             now = bot_now()
-            h_now = now.hour
 
             for city_name in city_names:
                 state = states[city_name]
                 city = state.city
                 city_today = city_date(city)
 
-                # Skip fora do horário ativo
-                if not (city.day_start <= h_now <= city.day_end):
+                # Skip fora do horário ativo (hora LOCAL da cidade, não do bot)
+                city_h_now = city_now(city).hour
+                if not (city.day_start <= city_h_now <= city.day_end):
                     continue
 
                 try:
-                    stats = _tick_city(state, args.run, PARCEL_SIZE * 100)
+                    # Passar o bankroll correto para a cidade
+                    city_bankroll = city_bankrolls.get(city_name, PARCEL_SIZE * 100)
+                    stats = _tick_city(state, args.run, city_bankroll)
 
                 except Exception as e:
                     print(f"  {C['red']}{city.name}: Tick failed: {e}{R}")

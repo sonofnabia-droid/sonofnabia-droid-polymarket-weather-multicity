@@ -14,8 +14,11 @@ requests>=2.31.0
 python-dotenv>=1.0.0
 tzdata>=2023.3
 
-# Polymarket CLOB (se estiveres a usar)
-py_clob_client>=0.9.0
+# Polymarket CLOB v2 (SDK nova — Abril 2026)
+py_clob_client_v2>=0.9.0
+
+# Cloudflare bypass (opcional, para orderbooks públicos)
+curl_cffi>=0.6.0
 
 # Opcional (Telegram)
 python-telegram-bot>=20.0

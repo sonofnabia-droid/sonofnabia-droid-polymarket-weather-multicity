@@ -221,6 +221,36 @@ class TG:
             lines.append(f"  💾 <i>Capital salvo: ${saved:.2f}</i>")
         return self.send("\n".join(lines))
 
+    def alert_stop_loss_blocked(self, position, current_temp, reason):
+        """
+        Stop-loss DISPAROU mas não foi possível vender.
+
+        Razões típicas:
+          - bid muito baixo (<2¢, não vale a pena pelo gas/fee)
+          - bracket sem match no mercado actual
+          - posição não encontrada no CLOB
+          - sell_yes falhou (rede, rate limit, etc)
+
+        Posição vai expirar (perda total provável).
+        """
+        bracket_label = position.get("bracket_label", "?")
+        bracket_hi    = position.get("temp_hi", "?")
+        size          = position.get("size_usdc", 0)
+
+        lines = [
+            "🚨 <b>STOP-LOSS BLOQUEADO</b>",
+            "",
+            f"  🌡 Temp atual: <b>{current_temp:.1f}°C</b>  "
+            f"(bracket <b>{int(bracket_hi) if isinstance(bracket_hi, (int, float)) else bracket_hi}°C+1</b>)",
+            f"  🎯 Bracket: <b>{bracket_label}</b>",
+            f"  💰 Em risco: <b>${size:.2f}</b>",
+            "",
+            f"  ❌ Motivo: <i>{str(reason)[:150]}</i>",
+            "",
+            "  <i>Posição vai expirar — perda provável.</i>",
+        ]
+        return self.send("\n".join(lines))
+
     # ══════════════════════════════════════════════════════
     #  ALERTAS DE RESOLUÇÃO
     # ══════════════════════════════════════════════════════

@@ -3,13 +3,62 @@ cities/config.py
 ================
 Configuração de cidades para sistema multi-cidade.
 
-Contém CityConfig dataclass e CITIES dict com configuração
-de Munich, Dallas e Ankara.
+Contém CityConfig dataclass, StrategyConfig, ForecastConfidenceConfig
+e CITIES dict com configuração de Munich, Dallas e Ankara.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
+
+
+@dataclass
+class ForecastConfidenceConfig:
+    """Configuração do Forecast Confidence por cidade."""
+    enabled: bool = False
+    accuracy_by_month: dict[int, float] = field(default_factory=dict)
+    margin: float = 0.05
+
+    def __post_init__(self):
+        if not self.accuracy_by_month and self.enabled:
+            # Valores padrão baseados em POLY-IRIS
+            self.accuracy_by_month = {
+                1: 0.72, 2: 0.75, 3: 0.78, 4: 0.82, 5: 0.85, 6: 0.83,
+                7: 0.80, 8: 0.80, 9: 0.82, 10: 0.78, 11: 0.74, 12: 0.71,
+            }
+
+
+@dataclass
+class DualStrategyConfig:
+    """Configuração do Dual Strategy por cidade."""
+    enabled: bool = False
+    parcel_size: float = 5.0
+    fc_hour_min: int = 10
+    fc_hour_max: int = 14
+    fc_p_min: float = 0.75
+    fc_ev_margin: float = 0.05
+    pk_threshold: float = 0.650
+    pk_hour_min: int = 11
+    stop_loss_delta: float = 1.0
+
+
+@dataclass
+class SingleEntryConfig:
+    """Configuração do Single Entry por cidade."""
+    enabled: bool = True
+    parcel_size: float = 5.0
+    threshold: float = 0.650
+    hour_min: int = 11
+    stop_loss_delta: float = 1.0
+
+
+@dataclass
+class StrategyConfig:
+    """Configuração de estratégias por cidade."""
+    mode: str = "single"  # "single", "dual"
+    single: SingleEntryConfig = field(default_factory=SingleEntryConfig)
+    dual: DualStrategyConfig = field(default_factory=DualStrategyConfig)
+    forecast_confidence: ForecastConfidenceConfig = field(default_factory=ForecastConfidenceConfig)
 
 
 @dataclass
@@ -77,8 +126,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # Balanceado (novo CSV): 232 trades/ano, win=96.2%, ROI=+79.5%
-        hour_min=17,      # Balanceado
+        threshold=0.350,  # Calibrado: 232 trades/ano, win=96.2%, ROI=+79.5%
+        hour_min=17,      # Calibrado
         bot_timezone="America/Chicago",
         climatology={
             1: 13.0, 2: 16.0, 3: 21.0, 4: 26.0, 5: 30.0, 6: 34.0,
@@ -100,8 +149,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # Balanceado (novo CSV): 281 trades/ano, win=89.9%, ROI=+106.8%
-        hour_min=15,      # Balanceado
+        threshold=0.350,  # Calibrado: 281 trades/ano, win=89.9%, ROI=+106.8%
+        hour_min=15,      # Calibrado
         bot_timezone="Europe/Istanbul",
         climatology={
             1: 4.0, 2: 6.0, 3: 11.0, 4: 16.0, 5: 21.0, 6: 25.0,

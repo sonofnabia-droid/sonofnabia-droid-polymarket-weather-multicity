@@ -611,6 +611,106 @@ def get_grid(mode: str):
 # ══════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════
+def run_calibration(
+    city_name: str,
+    years: int = 5,
+    mode: str = "standard",
+    metric: str = "outcome",
+    realistic: bool = False,
+    quiet: bool = False,
+) -> dict | None:
+    """
+    Corre calibração para 1 cidade e devolve dict com melhor configuração.
+
+    Função reutilizável para wrappers (ex: calibrate_all.py).
+    Não imprime tabelas — só faz o trabalho e devolve resultados.
+
+    Args:
+        city_name: nome da cidade (munich, dallas, ankara)
+        years: anos de histórico
+        mode: fast | standard | detailed | full
+        metric: outcome | roi
+        realistic: usar SimulatedMarket com ruído
+        quiet: se True, silencia prints intermédios
+
+    Returns:
+        dict com:
+            threshold, hour_min, outcome_score, win_pct, trades_per_year,
+            n_trades, n_days, data_period, metric, mode, ...
+        ou None em caso de erro.
+    """
+    try:
+        city = get_city(city_name)
+        set_city(city_name)
+
+        if not quiet:
+            _console.print(f"  [{city_name}] Loading model and data...")
+
+        models = load_models(city_name)
+        df_all = load_data(Path(city.csv_path), city)
+        df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
+        end_date = date.today() - timedelta(days=1)
+        start_date = date(end_date.year - years + 1, 1, 1)
+        df = df_all[(df_all["date"] >= start_date) & (df_all["date"] <= end_date)].copy()
+
+        if df.empty:
+            return None
+
+        if not quiet:
+            _console.print(f"  [{city_name}] {len(df):,} slots, {df['date'].nunique()} days "
+                           f"({start_date} → {end_date})")
+            _console.print(f"  [{city_name}] Generating signals...")
+
+        signals_df = generate_daily_signals(df, models, city)
+
+        thresholds, hour_mins = get_grid(mode)
+        if not quiet:
+            _console.print(f"  [{city_name}] Grid: {len(thresholds)}×{len(hour_mins)} = "
+                           f"{len(thresholds)*len(hour_mins)} combos")
+
+        results = run_grid_search(
+            signals_df, city, thresholds, hour_mins,
+            realistic_market=realistic,
+        )
+
+        if not results:
+            return None
+
+        # Filtrar viáveis (>= 30 trades)
+        viable = [r for r in results if r["trades"] >= 30]
+        if not viable:
+            viable = results  # se nenhum viável, usar todos
+
+        sort_key = "outcome_score" if metric == "outcome" else "roi_pct"
+        best = max(viable, key=lambda r: r.get(sort_key, 0))
+
+        n_days = signals_df["date"].nunique() if "date" in signals_df.columns else 1
+
+        return {
+            "city":             city_name,
+            "threshold":        round(best["threshold"], 4),
+            "hour_min":         int(best["hour_min"]),
+            "outcome_score":    round(best.get("outcome_score", 0), 4),
+            "roi_pct":          round(best.get("roi_pct", 0), 2),
+            "win_pct":          round(best.get("win_pct", 0), 2),
+            "n_trades":         int(best["trades"]),
+            "trades_per_year":  round(best["trades"] / n_days * 365, 1) if n_days else 0,
+            "median_lag_h":     round(best.get("median_lag_h", 0), 2),
+            "data_period":      [str(start_date), str(end_date)],
+            "n_days":           int(n_days),
+            "metric":           metric,
+            "mode":             mode,
+            "years":            years,
+        }
+
+    except Exception as e:
+        if not quiet:
+            import traceback
+            _console.print(f"  [red][{city_name}] Calibration failed: {e}[/red]")
+            _console.print(f"  [dim red]{traceback.format_exc()}[/dim red]")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Calibração genérica multi-cidade")
     parser.add_argument("--city", type=str, default="munich", choices=list(CITIES.keys()),

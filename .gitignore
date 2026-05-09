@@ -45,3 +45,4 @@ argparse
 # Jupyter notebooks
 .ipynb_checkpoints/
 *.ipynb
+.aider*
