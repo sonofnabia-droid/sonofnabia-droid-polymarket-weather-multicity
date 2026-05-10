@@ -157,6 +157,419 @@ CITIES = {
             7: 29.0, 8: 29.0, 9: 24.0, 10: 18.0, 11: 11.0, 12: 6.0
         },
     ),
+
+    # ─────────────────────────────────────────────────────────────
+    #  CIDADES TROPICAIS / EQUATORIAIS
+    #  Aviso: variação diária pequena (5-8°C) → peak detection desafiante
+    # ─────────────────────────────────────────────────────────────
+
+    "singapore": CityConfig(
+        name="singapore",
+        icao="WSSS",
+        timezone="Asia/Singapore",
+        latitude=1.3502,
+        longitude=103.9940,
+        polymarket_slug_pfx="highest-temperature-in-singapore-on",
+        wu_history_path="sg/singapore/WSSS",  # Polymarket usa WU
+        csv_path="historic/singapore.csv",
+        model_dir="singapore_peak_model",
+        unit="celsius",
+        temp_range=range(20, 37),  # Equatorial — variação muito pequena
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,    # A calibrar
+        hour_min=None,     # A calibrar
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 31.0, 2: 32.0, 3: 32.0, 4: 32.0, 5: 32.0, 6: 32.0,
+            7: 31.0, 8: 31.0, 9: 31.0, 10: 31.0, 11: 31.0, 12: 30.0
+        },
+    ),
+
+    "jakarta": CityConfig(
+        name="jakarta",
+        icao="WIII",
+        timezone="Asia/Jakarta",
+        latitude=-6.1256,
+        longitude=106.6560,
+        polymarket_slug_pfx="highest-temperature-in-jakarta-on",
+        wu_history_path=None,  # A confirmar fonte Polymarket
+        csv_path="historic/jakarta.csv",
+        model_dir="jakarta_peak_model",
+        unit="celsius",
+        temp_range=range(20, 37),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 30.0, 2: 30.0, 3: 31.0, 4: 32.0, 5: 32.0, 6: 32.0,
+            7: 32.0, 8: 32.0, 9: 33.0, 10: 33.0, 11: 32.0, 12: 31.0
+        },
+    ),
+
+    "kuala_lumpur": CityConfig(
+        name="kuala_lumpur",
+        icao="WMKK",
+        timezone="Asia/Kuala_Lumpur",
+        latitude=2.7456,
+        longitude=101.7100,
+        polymarket_slug_pfx="highest-temperature-in-kuala-lumpur-on",
+        wu_history_path=None,
+        csv_path="historic/kuala_lumpur.csv",
+        model_dir="kuala_lumpur_peak_model",
+        unit="celsius",
+        temp_range=range(20, 37),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 32.0, 2: 33.0, 3: 33.0, 4: 33.0, 5: 33.0, 6: 33.0,
+            7: 32.0, 8: 32.0, 9: 32.0, 10: 32.0, 11: 32.0, 12: 32.0
+        },
+    ),
+
+    "lagos": CityConfig(
+        name="lagos",
+        icao="DNMM",
+        timezone="Africa/Lagos",
+        latitude=6.5774,
+        longitude=3.3212,
+        polymarket_slug_pfx="highest-temperature-in-lagos-on",
+        wu_history_path=None,
+        csv_path="historic/lagos.csv",
+        model_dir="lagos_peak_model",
+        unit="celsius",
+        temp_range=range(18, 38),  # Tropical húmido — Mar/Abr são os mais quentes
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 32.0, 2: 33.0, 3: 33.0, 4: 32.0, 5: 31.0, 6: 29.0,
+            7: 28.0, 8: 28.0, 9: 29.0, 10: 30.0, 11: 31.0, 12: 32.0
+        },
+    ),
+
+    # ─────────────────────────────────────────────────────────────
+    #  CIDADES SUBTROPICAIS / TEMPERADAS
+    #  Variação anual e diária maiores → melhor sinal para o modelo
+    # ─────────────────────────────────────────────────────────────
+
+    "taipei": CityConfig(
+        name="taipei",
+        icao="RCSS",
+        timezone="Asia/Taipei",
+        latitude=25.0694,
+        longitude=121.5517,
+        polymarket_slug_pfx="highest-temperature-in-taipei-on",
+        wu_history_path="tw/taipei/RCSS",  # Polymarket usa WU/RCSS (Songshan)
+        csv_path="historic/taipei.csv",
+        model_dir="taipei_peak_model",
+        unit="celsius",
+        temp_range=range(5, 40),  # Subtropical — bom range
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 19.0, 2: 20.0, 3: 23.0, 4: 26.0, 5: 30.0, 6: 32.0,
+            7: 34.0, 8: 33.0, 9: 31.0, 10: 28.0, 11: 25.0, 12: 21.0
+        },
+    ),
+
+    "miami": CityConfig(
+        name="miami",
+        icao="KMIA",
+        timezone="America/New_York",
+        latitude=25.7954,
+        longitude=-80.2901,
+        polymarket_slug_pfx="highest-temperature-in-miami-on",
+        wu_history_path=None,  # A confirmar (provavelmente NOAA/KMIA)
+        csv_path="historic/miami.csv",
+        model_dir="miami_peak_model",
+        unit="celsius",
+        temp_range=range(5, 40),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 25.0, 2: 26.0, 3: 28.0, 4: 29.0, 5: 31.0, 6: 32.0,
+            7: 33.0, 8: 33.0, 9: 32.0, 10: 30.0, 11: 28.0, 12: 26.0
+        },
+    ),
+
+    "karachi": CityConfig(
+        name="karachi",
+        icao="OPKC",
+        timezone="Asia/Karachi",
+        latitude=24.9008,
+        longitude=67.1681,
+        polymarket_slug_pfx="highest-temperature-in-karachi-on",
+        wu_history_path=None,
+        csv_path="historic/karachi.csv",
+        model_dir="karachi_peak_model",
+        unit="celsius",
+        temp_range=range(5, 48),  # Subtropical árido — pode chegar aos 45°C+
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 25.0, 2: 27.0, 3: 32.0, 4: 35.0, 5: 36.0, 6: 35.0,
+            7: 33.0, 8: 32.0, 9: 33.0, 10: 35.0, 11: 32.0, 12: 27.0
+        },
+    ),
+
+    # ─────────────────────────────────────────────────────────────
+    #  CIDADES CONTINENTAIS / FRIAS
+    #  Forte variação anual → bom sinal para o modelo
+    # ─────────────────────────────────────────────────────────────
+
+    "moscow": CityConfig(
+        name="moscow",
+        icao="UUEE",
+        timezone="Europe/Moscow",
+        latitude=55.9736,
+        longitude=37.4125,
+        polymarket_slug_pfx="highest-temperature-in-moscow-on",
+        wu_history_path=None,
+        csv_path="historic/moscow.csv",
+        model_dir="moscow_peak_model",
+        unit="celsius",
+        temp_range=range(-30, 38),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: -4.0, 2: -3.0, 3: 4.0,  4: 12.0, 5: 20.0, 6: 23.0,
+            7: 26.0, 8: 24.0, 9: 17.0, 10: 9.0,  11: 1.0, 12: -3.0
+        },
+    ),
+
+    "warsaw": CityConfig(
+        name="warsaw",
+        icao="EPWA",
+        timezone="Europe/Warsaw",
+        latitude=52.1657,
+        longitude=20.9671,
+        polymarket_slug_pfx="highest-temperature-in-warsaw-on",
+        wu_history_path=None,
+        csv_path="historic/warsaw.csv",
+        model_dir="warsaw_peak_model",
+        unit="celsius",
+        temp_range=range(-20, 36),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 1.0,  2: 3.0,  3: 8.0,  4: 14.0, 5: 20.0, 6: 23.0,
+            7: 25.0, 8: 24.0, 9: 18.0, 10: 12.0, 11: 5.0, 12: 2.0
+        },
+    ),
+
+    "beijing": CityConfig(
+        name="beijing",
+        icao="ZBAA",
+        timezone="Asia/Shanghai",
+        latitude=40.0799,
+        longitude=116.6031,
+        polymarket_slug_pfx="highest-temperature-in-beijing-on",
+        wu_history_path=None,
+        csv_path="historic/beijing.csv",
+        model_dir="beijing_peak_model",
+        unit="celsius",
+        temp_range=range(-20, 40),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 1.0,  2: 5.0,  3: 12.0, 4: 20.0, 5: 26.0, 6: 31.0,
+            7: 31.0, 8: 29.0, 9: 23.0, 10: 16.0, 11: 7.0, 12: 2.0
+        },
+    ),
+
+    "chicago": CityConfig(
+        name="chicago",
+        icao="KORD",
+        timezone="America/Chicago",
+        latitude=41.9742,
+        longitude=-87.9073,
+        polymarket_slug_pfx="highest-temperature-in-chicago-on",
+        wu_history_path=None,
+        csv_path="historic/chicago.csv",
+        model_dir="chicago_peak_model",
+        unit="celsius",
+        temp_range=range(-25, 38),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: -1.0, 2: 1.0,  3: 7.0,  4: 14.0, 5: 20.0, 6: 26.0,
+            7: 29.0, 8: 28.0, 9: 23.0, 10: 16.0, 11: 7.0, 12: 1.0
+        },
+    ),
+
+    # ─────────────────────────────────────────────────────────────
+    #  CIDADES MEDITERRÂNEAS / SEMIÁRIDAS TEMPERADAS
+    # ─────────────────────────────────────────────────────────────
+
+    "madrid": CityConfig(
+        name="madrid",
+        icao="LEMD",
+        timezone="Europe/Madrid",
+        latitude=40.4719,
+        longitude=-3.5626,
+        polymarket_slug_pfx="highest-temperature-in-madrid-on",
+        wu_history_path=None,
+        csv_path="historic/madrid.csv",
+        model_dir="madrid_peak_model",
+        unit="celsius",
+        temp_range=range(-10, 42),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 10.0, 2: 12.0, 3: 16.0, 4: 18.0, 5: 23.0, 6: 28.0,
+            7: 33.0, 8: 32.0, 9: 27.0, 10: 20.0, 11: 14.0, 12: 10.0
+        },
+    ),
+
+    "tel_aviv": CityConfig(
+        name="tel_aviv",
+        icao="LLBG",
+        timezone="Asia/Jerusalem",
+        latitude=32.0115,
+        longitude=34.8867,
+        polymarket_slug_pfx="highest-temperature-in-tel-aviv-on",
+        wu_history_path=None,
+        csv_path="historic/tel_aviv.csv",
+        model_dir="tel_aviv_peak_model",
+        unit="celsius",
+        temp_range=range(10, 40),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 17.0, 2: 18.0, 3: 20.0, 4: 24.0, 5: 27.0, 6: 30.0,
+            7: 31.0, 8: 32.0, 9: 30.0, 10: 27.0, 11: 22.0, 12: 18.0
+        },
+    ),
+
+    # ─────────────────────────────────────────────────────────────
+    #  CIDADES ÁRIDAS / DESÉRTICAS
+    #  Picos de calor extremos no verão → alta variância no range
+    # ─────────────────────────────────────────────────────────────
+
+    "phoenix": CityConfig(
+        name="phoenix",
+        icao="KPHX",
+        timezone="America/Phoenix",  # UTC-7 fixo, sem DST
+        latitude=33.4373,
+        longitude=-112.0078,
+        polymarket_slug_pfx="highest-temperature-in-phoenix-on",
+        wu_history_path=None,
+        csv_path="historic/phoenix.csv",
+        model_dir="phoenix_peak_model",
+        unit="celsius",
+        temp_range=range(-2, 48),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 19.0, 2: 22.0, 3: 26.0, 4: 31.0, 5: 36.0, 6: 41.0,
+            7: 40.0, 8: 38.0, 9: 36.0, 10: 30.0, 11: 23.0, 12: 19.0
+        },
+    ),
+
+    "las_vegas": CityConfig(
+        name="las_vegas",
+        icao="KLAS",
+        timezone="America/Los_Angeles",
+        latitude=36.0840,
+        longitude=-115.1537,
+        polymarket_slug_pfx="highest-temperature-in-las-vegas-on",
+        wu_history_path=None,
+        csv_path="historic/las_vegas.csv",
+        model_dir="las_vegas_peak_model",
+        unit="celsius",
+        temp_range=range(-5, 47),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 13.0, 2: 17.0, 3: 22.0, 4: 27.0, 5: 33.0, 6: 39.0,
+            7: 41.0, 8: 39.0, 9: 34.0, 10: 27.0, 11: 18.0, 12: 13.0
+        },
+    ),
+
+    # ─────────────────────────────────────────────────────────────
+    #  HEMISFÉRIO SUL
+    #  Sazonalidade invertida — pico no verão austral (Dez–Fev)
+    # ─────────────────────────────────────────────────────────────
+
+    "buenos_aires": CityConfig(
+        name="buenos_aires",
+        icao="SAEZ",
+        timezone="America/Argentina/Buenos_Aires",  # UTC-3, sem DST
+        latitude=-34.5597,
+        longitude=-58.4116,
+        polymarket_slug_pfx="highest-temperature-in-buenos-aires-on",
+        wu_history_path=None,
+        csv_path="historic/buenos_aires.csv",
+        model_dir="buenos_aires_peak_model",
+        unit="celsius",
+        temp_range=range(-5, 40),
+        max_daily_loss=20.0,
+        max_per_trade=5.0,
+        extra_features=[],
+        threshold=None,
+        hour_min=None,
+        bot_timezone="Europe/Lisbon",
+        climatology={
+            1: 30.0, 2: 29.0, 3: 26.0, 4: 22.0, 5: 18.0, 6: 15.0,
+            7: 14.0, 8: 16.0, 9: 19.0, 10: 23.0, 11: 27.0, 12: 29.0
+        },
+    ),
 }
 
 

@@ -36,8 +36,7 @@ _last_save_time: float = 0.0
 
 
 def set_city(name: str) -> CityConfig:
-    """Define a cidade atual e retorna sua configuração."""
-    global _city_config, _city_zoneinfo
+    global _city_config, _city_zoneinfo, _bot_zoneinfo  # ← adicionar _bot_zoneinfo
     _city_config = get_city(name)
     _city_zoneinfo = ZoneInfo(_city_config.timezone)
     _bot_zoneinfo = ZoneInfo(_city_config.bot_timezone)
@@ -273,7 +272,7 @@ def predict_ensemble(
 ) -> dict:
     """Predição ensemble (agora LightGBM puro). Mantém assinatura para compatibilidade."""
     city = models.get("_city", _get_city())
-    hour_min = city.hour_min or 6
+    hour_min = city.hour_min if city.hour_min is not None else 6
 
     hour = current["hour"]
     if len(slots_so_far) < 4 or hour < hour_min:
@@ -285,6 +284,10 @@ def predict_ensemble(
             "weights": {"lgbm": 1.0, "xgb": 0.0, "zscore": 0.0},
             "components": {},
         }
+
+    # ← NOVO: Restaurar prior da cidade correcta (evita global stale em multi-cidade)
+    set_seasonal_prior(models.get("prior_map", {}))
+
 
     feat_cols = models["feat_cols"]
     row = build_features(slots_so_far, current, month, doy)

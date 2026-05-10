@@ -1,172 +1,310 @@
-"""
-munich_download.py
-==================
-Descarrega histórico horário para Munich via Open-Meteo Archive API.
-
-Variáveis descarregadas (um único request):
-  temperature_2m   — temperatura a 2m (°C)
-  cloud_cover      — cobertura de nuvens (%)        ← novo
-  relative_humidity_2m — humidade relativa (%)      ← novo
-
-Output: munich_historical.csv
-
-Colunas no CSV:
-  datetime, temp_c, cloud_cover, humidity,
-  date, hour, month, doy, year
-
-Instalação:
-    pip install requests pandas
-
-Uso:
-    python munich_download.py
-    python munich_download.py --start 2010-01-01
-    python munich_download.py --start 2014-01-01 --end 2024-12-31
-    python munich_download.py --output meu_ficheiro.csv
-
-    # Actualizar CSV existente (acrescenta dias novos)
-    python munich_download.py --update
-"""
-
+import time
+import logging
 import argparse
+from datetime import date, timedelta, datetime
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from zoneinfo import ZoneInfo
+
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
-from pathlib import Path
+from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+from colorama import init, Fore
 
-# ── Config ─────────────────────────────────────────────
-MUNICH_LAT     = 48.1374
-MUNICH_LON     = 11.5755
-TIMEZONE       = "Europe/Berlin"
+init(autoreset=True)
 
-DEFAULT_START  = "2014-01-01"
-DEFAULT_END    = (datetime.today() - timedelta(days=2)).strftime("%Y-%m-%d")
-DEFAULT_OUTPUT = "munich_historical.csv"
+# ── Configuration ──────────────────────────────────────────────────────────────
+STATION = "EDDM"
+CITY = "munich"
+TZ = "Europe/Berlin"
+COUNTRY = "DE"
+UNITS = "m"
 
-# Variáveis a descarregar (todas num único request)
-HOURLY_VARS = "temperature_2m,cloud_cover,relative_humidity_2m"
+MAX_THREADS = 4
+SLEEP_SEC = 0.4
+
+OUTPUT_DIR = Path("historic")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+CSV_PATH = OUTPUT_DIR / f"{CITY}.csv"
+
+# ── HTTP session ───────────────────────────────────────────────────────────────
+session = requests.Session()
+session.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.wunderground.com/",
+    "Origin": "https://www.wunderground.com",
+})
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
+log = logging.getLogger(__name__)
 
 
-# ── Download ───────────────────────────────────────────
-def download(start: str, end: str, output: str):
-    print(f"── Munich Historical Download ───────────────")
-    print(f"   Período  : {start} → {end}")
-    print(f"   Variáveis: temperatura, cloud cover, humidade")
-    print(f"   Output   : {output}")
-    print(f"   API      : Open-Meteo Archive (gratuito, sem key)")
-    print()
+# ── Date parser ────────────────────────────────────────────────────────────────
+def parse_date(value: str) -> date:
+    """
+    Aceita:
+      2008-01-01
+      01-01-2008
+    """
+    try:
+        if len(value.split("-")[0]) == 2:
+            return datetime.strptime(value, "%d-%m-%Y").date()
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise SystemExit(
+            f"{Fore.RED}Erro: formato inválido '{value}'. Usa 2008-01-01 ou 01-01-2008."
+        )
 
-    url    = "https://archive-api.open-meteo.com/v1/archive"
+
+# ── Fetch one day ──────────────────────────────────────────────────────────────
+def fetch_day(station: str, tz: str, day: date) -> list[dict]:
+    date_str = day.strftime("%Y%m%d")
+
+    url = (
+        f"https://api.weather.com/v1/location/{station}:9:{COUNTRY}"
+        f"/observations/historical.json"
+    )
+
     params = {
-        "latitude":   MUNICH_LAT,
-        "longitude":  MUNICH_LON,
-        "start_date": start,
-        "end_date":   end,
-        "hourly":     HOURLY_VARS,
-        "timezone":   TIMEZONE,
+        "apiKey": "e1f10a1e78da46f5b10a1e78da96f525",
+        "units": UNITS,
+        "startDate": date_str,
     }
 
-    print("A fazer request...", end=" ", flush=True)
-    r = requests.get(url, params=params, timeout=60)
-    r.raise_for_status()
-    data = r.json()
-    print("✓")
+    try:
+        r = session.get(url, params=params, timeout=25)
+        r.raise_for_status()
+        data = r.json()
+        obs = data.get("observations", [])
 
-    h = data["hourly"]
-    df = pd.DataFrame({
-        "datetime":    pd.to_datetime(h["time"]),
-        "temp_c":      h["temperature_2m"],
-        "cloud_cover": h.get("cloud_cover"),
-        "humidity":    h.get("relative_humidity_2m"),
-    })
+        rows = []
 
-    # Colunas auxiliares
-    df["date"]  = df["datetime"].dt.date
-    df["hour"]  = df["datetime"].dt.hour
-    df["month"] = df["datetime"].dt.month
-    df["doy"]   = df["datetime"].dt.dayofyear
-    df["year"]  = df["datetime"].dt.year
+        for o in obs:
+            gmt = o.get("valid_time_gmt")
 
-    # Remover linhas sem temperatura
-    n_raw = len(df)
-    df    = df.dropna(subset=["temp_c"])
-    n_drop= n_raw - len(df)
+            if gmt:
+                dt_local = datetime.fromtimestamp(gmt, tz=ZoneInfo(tz))
+                dt_utc = datetime.utcfromtimestamp(gmt)
+                date_local = dt_local.strftime("%d/%m/%Y")
+                time_local = dt_local.strftime("%H:%M")
+            else:
+                date_local = ""
+                time_local = ""
+                dt_utc = None
 
-    # Preencher NaN em cloud_cover e humidity com interpolação linear
-    df["cloud_cover"] = df["cloud_cover"].interpolate(limit=3).fillna(50.0)
-    df["humidity"]    = df["humidity"].interpolate(limit=3).fillna(70.0)
+            rows.append({
+                "date": date_local,
+                "time_local": time_local,
+                "timestamp_utc": dt_utc,
+                "temp_c": o.get("temp"),
+                "dewpt_c": o.get("dewpt"),
+                "humidity_pct": o.get("rh"),
+                "pressure_hpa": o.get("pressure"),
+                "wind_dir_deg": o.get("wdir"),
+                "wind_dir_card": o.get("wdir_cardinal"),
+                "wind_speed_kmh": o.get("wspd"),
+                "wind_gust_kmh": o.get("gust"),
+                "precip_mm": o.get("precip_hrly"),
+                "condition": o.get("wx_phrase"),
+                "uv_index": o.get("uv_index"),
+                "visibility_km": o.get("vis"),
+                "sky_cover": o.get("sky_cover"),
+                "heat_index_c": o.get("heat_index"),
+                "windchill_c": o.get("windchill"),
+            })
 
-    df.to_csv(output, index=False)
+        time.sleep(SLEEP_SEC)
+        return rows
 
-    print()
-    print(f"── Resumo ───────────────────────────────────")
-    print(f"   Linhas         : {len(df):,} horas")
-    print(f"   Dias           : {df['date'].nunique():,}")
-    print(f"   Anos           : {df['year'].min()} → {df['year'].max()}")
-    print(f"   NaN temp. rem. : {n_drop}")
-    print(f"   Temp.          : {df['temp_c'].min():.1f}°C → {df['temp_c'].max():.1f}°C  (média {df['temp_c'].mean():.1f}°C)")
-    print(f"   Cloud cover    : {df['cloud_cover'].min():.0f}% → {df['cloud_cover'].max():.0f}%  (média {df['cloud_cover'].mean():.0f}%)")
-    print(f"   Humidade       : {df['humidity'].min():.0f}% → {df['humidity'].max():.0f}%  (média {df['humidity'].mean():.0f}%)")
-    print(f"   Ficheiro       : {Path(output).resolve()}")
-    print(f"────────────────────────────────────────────")
-    print(f"✅ Concluído.")
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        log.warning(f"{Fore.YELLOW}{station} {day} HTTP {status} – skipping")
+    except Exception as e:
+        log.warning(f"{Fore.RED}{station} {day} error: {e}")
+
+    return []
+
+
+# ── Download date range ────────────────────────────────────────────────────────
+def download_station(
+    station: str,
+    city: str,
+    tz: str,
+    start: date,
+    end: date,
+    progress=None,
+    task=None,
+) -> pd.DataFrame | None:
+
+    if end < start:
+        print(f"{Fore.YELLOW}Nada a descarregar: end < start.")
+        return None
+
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    all_rows: list[dict] = []
+
+    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+        futures = {executor.submit(fetch_day, station, tz, d): d for d in days}
+
+        for future in as_completed(futures):
+            rows = future.result()
+            all_rows.extend(rows)
+
+            if progress and task is not None:
+                progress.advance(task)
+
+    if not all_rows:
+        log.warning(f"{Fore.YELLOW}No data returned for {station}.")
+        return None
+
+    df = pd.DataFrame(all_rows)
+
+    df["_sort"] = pd.to_datetime(df["timestamp_utc"], utc=True, errors="coerce")
+    df = df.sort_values("_sort").drop(columns=["_sort"])
+
+    csv_path = OUTPUT_DIR / f"{city}.csv"
+    df.to_csv(csv_path, index=False)
+
+    log.info(f"{Fore.GREEN}✔ Saved {csv_path} ({len(df)} observations)")
+
     return df
 
 
-# ── Update (acrescenta só dias novos) ──────────────────
-def update(output: str):
-    """
-    Lê o CSV existente, verifica a última data,
-    e descarrega apenas os dias em falta até hoje.
-    """
-    path = Path(output)
-    if not path.exists():
-        print(f"  {output} não existe — a fazer download completo...")
-        download(DEFAULT_START, DEFAULT_END, output)
-        return
+# ── Full download ──────────────────────────────────────────────────────────────
+def main_download(start_date: date, end_date: date) -> None:
+    print(f"{Fore.CYAN}╔══════════════════════════════════════╗")
+    print(f"{Fore.CYAN}║ Wunderground – EDDM Munich           ║")
+    print(f"{Fore.CYAN}║ /daily/de/munich/EDDM                ║")
+    print(f"{Fore.CYAN}╚══════════════════════════════════════╝\n")
 
-    existing = pd.read_csv(output, parse_dates=["datetime"])
-    last_date = existing["datetime"].max().date()
-    new_start = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
-    new_end   = (datetime.today() - timedelta(days=2)).strftime("%Y-%m-%d")
+    total_days = (end_date - start_date).days + 1
 
-    if new_start > new_end:
-        print(f"  CSV já actualizado até {last_date} — nada a fazer.")
-        return
-
-    print(f"  Última data no CSV: {last_date}")
-    print(f"  A descarregar: {new_start} → {new_end}")
-
-    new_df = download(new_start, new_end, output="_tmp_update.csv")
-
-    # Verificar se CSV existente tem as novas colunas
-    for col, fill in [("cloud_cover", 50.0), ("humidity", 70.0)]:
-        if col not in existing.columns:
-            existing[col] = fill
-
-    combined = pd.concat([existing, new_df], ignore_index=True)
-    combined  = combined.drop_duplicates(subset=["datetime"]).sort_values("datetime")
-    combined.to_csv(output, index=False)
-
-    Path("_tmp_update.csv").unlink(missing_ok=True)
-    print(f"\n  ✓ CSV actualizado: {len(combined):,} horas totais → {output}")
-
-
-# ── Main ───────────────────────────────────────────────
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Download histórico horário Munich — Open-Meteo"
+    print(
+        f"{Fore.WHITE}A descarregar {total_days} dias "
+        f"({start_date} → {end_date}) para {STATION}\n"
     )
-    parser.add_argument("--start",  default=DEFAULT_START,
-                        help=f"Data início (default: {DEFAULT_START})")
-    parser.add_argument("--end",    default=DEFAULT_END,
-                        help=f"Data fim (default: hoje-2d)")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT,
-                        help=f"Ficheiro CSV (default: {DEFAULT_OUTPUT})")
-    parser.add_argument("--update", action="store_true",
-                        help="Acrescentar só dias novos ao CSV existente")
+
+    with Progress(
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    ) as progress:
+
+        task = progress.add_task(f"[{STATION}] Munich", total=total_days)
+
+        df = download_station(
+            STATION,
+            CITY,
+            TZ,
+            start_date,
+            end_date,
+            progress,
+            task,
+        )
+
+    if df is not None:
+        print(f"\n{Fore.CYAN}── Resumo ───────────────────────────────────")
+        print(f"{Fore.WHITE}Linhas       : {len(df):,}")
+        print(f"{Fore.WHITE}Ficheiro     : {CSV_PATH.resolve()}")
+        print(f"{Fore.GREEN}✅ Concluído.")
+
+
+# ── Update mode ────────────────────────────────────────────────────────────────
+def update_mode() -> None:
+    if not CSV_PATH.exists():
+        print(f"{Fore.YELLOW}Ficheiro não existe → download completo...")
+        main_download(date(2008, 1, 1), date.today() - timedelta(days=1))
+        return
+
+    df = pd.read_csv(CSV_PATH, parse_dates=["timestamp_utc"])
+
+    if df.empty or "timestamp_utc" not in df.columns:
+        print(f"{Fore.YELLOW}CSV vazio ou inválido → download completo...")
+        main_download(date(2008, 1, 1), date.today() - timedelta(days=1))
+        return
+
+    last_date = pd.to_datetime(df["timestamp_utc"], errors="coerce").max().date()
+    new_start = last_date + timedelta(days=1)
+    today = date.today() - timedelta(days=1)
+
+    if new_start > today:
+        print(f"{Fore.GREEN}CSV já actualizado até {last_date} — nada a fazer.")
+        return
+
+    print(f"{Fore.CYAN}Última data: {last_date} → descarregar {new_start} até {today}")
+
+    total_days = (today - new_start).days + 1
+
+    with Progress(
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    ) as progress:
+
+        task = progress.add_task(f"[{STATION}] Munich update", total=total_days)
+
+        new_df = download_station(
+            STATION,
+            CITY,
+            TZ,
+            new_start,
+            today,
+            progress,
+            task,
+        )
+
+    if new_df is not None:
+        combined = pd.concat([df, new_df], ignore_index=True)
+        combined["timestamp_utc"] = pd.to_datetime(
+            combined["timestamp_utc"],
+            utc=True,
+            errors="coerce",
+        )
+        combined = combined.drop_duplicates(subset=["timestamp_utc"])
+        combined = combined.sort_values("timestamp_utc")
+        combined.to_csv(CSV_PATH, index=False)
+
+        print(f"{Fore.GREEN}✓ Actualizado: {len(combined):,} linhas em {CSV_PATH}")
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Download histórico Wunderground Munich")
+
+    parser.add_argument(
+        "--start",
+        default="2008-01-01",
+        help="Data de início. Aceita: 2008-01-01 ou 01-01-2008",
+    )
+
+    parser.add_argument(
+        "--end",
+        default=None,
+        help="Data de fim. Aceita: 2026-05-08 ou 08-05-2026. Opcional.",
+    )
+
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Acrescentar apenas dias novos ao CSV existente.",
+    )
+
     args = parser.parse_args()
 
     if args.update:
-        update(args.output)
+        update_mode()
     else:
-        download(start=args.start, end=args.end, output=args.output)
+        start_date = parse_date(args.start)
+        end_date = parse_date(args.end) if args.end else date.today() - timedelta(days=1)
+        main_download(start_date, end_date)

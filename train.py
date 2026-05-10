@@ -19,6 +19,7 @@ from sklearn.metrics import roc_auc_score
 from rich.console import Console
 from rich.table import Table
 from rich import box as rich_box
+from predictor import set_city, build_features, set_seasonal_prior, compute_prev7
 
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, build_features, set_seasonal_prior
@@ -74,8 +75,9 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
             h, m = dt_local.hour, dt_local.minute
             h2, s2 = ceil_slot(h, m)
             if h2 == 24:
-                dt_local = (dt_local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                h2 = 0
+                # Manter no mesmo dia como slot 23:30 (último slot do dia)
+                h2 = 23
+                s2 = 30
             return dt_local, h2, s2
 
         dt_locals, hours, slots30 = [], [], []
@@ -90,7 +92,7 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
         df["slot30"] = slots30
         df["month"] = [dt.month for dt in dt_locals]
         df["doy"] = [dt.timetuple().tm_yday for dt in dt_locals]
-        df["date"] = pd.to_datetime([dt.date() for dt in dt_locals])
+        df["date"] = [dt.date() for dt in dt_locals]  # Mantém como date objects
 
     # Normalizar colunas meteorológicas
     df = df.copy()
@@ -131,8 +133,17 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
 
     for d, day_df in df.groupby("date"):
         day_df = day_df.sort_values(["hour", "slot30"] if "slot30" in day_df.columns else ["hour"]).reset_index(drop=True)
-        peak_temp = day_df["temp_c"].max()
-        peak_idx = day_df[day_df["temp_c"] == peak_temp].index[-1]
+
+        # Skip dias sem dados de temperatura válidos
+        valid_temps = day_df["temp_c"].dropna()
+        if len(valid_temps) == 0:
+            continue
+
+        peak_temp = valid_temps.max()
+        peak_matches = day_df[day_df["temp_c"] == peak_temp]
+        if len(peak_matches) == 0:
+            continue
+        peak_idx = peak_matches.index[-1]
 
         slots_so_far: list[dict] = []
 
@@ -142,7 +153,7 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
             temp = float(row["temp_c"])
             label = 1 if (i == peak_idx) else 0
 
-            prev7 = history_max.get(d, city.climatology.get(d.month, 15.0) if city.climatology else 15.0)
+            prev7 = compute_prev7(history_max, d, city.name)
 
             slot_entry = {
                 "hour": h, "slot30": slot30, "temp_c": temp,
@@ -182,20 +193,55 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
 
     dataset = pd.DataFrame(rows)
 
-    # Prior sazonal
-    prior_map = {}
-    for (m, h, s), group in dataset.groupby(["month", "hour", "slot30"]):
-        prior_map[(m, h, s)] = group["label"].mean()
-
+    # Prior sazonal — calcular apenas com dados passados por defeito
+    prior_map = _compute_expanding_prior(dataset)
     set_seasonal_prior(prior_map)
-
     dataset["seasonal_peak_prior"] = dataset.apply(
         lambda r: prior_map.get((r["month"], r["hour"], r["slot30"]), 0.5),
         axis=1,
     )
-
     return dataset, prior_map
 
+
+def _compute_expanding_prior(dataset: pd.DataFrame) -> dict:
+    """Computa seasonal prior com expanding window (sem data leakage)."""
+    if "date" not in dataset.columns:
+        # Fallback: sem datas, usar média global
+        prior_map = {}
+        for (m, h, s), group in dataset.groupby(["month", "hour", "slot30"]):
+            prior_map[(m, h, s)] = group["label"].mean()
+        return prior_map
+
+    if not pd.api.types.is_datetime64_any_dtype(dataset["date"]):
+        dataset = dataset.copy()
+        dataset["date"] = pd.to_datetime(dataset["date"], errors="coerce")
+
+    # Ordenar por data
+    dataset = dataset.sort_values("date").reset_index(drop=True)
+
+    # Para cada ano, calcular prior apenas com anos anteriores
+    years = sorted(dataset["date"].dt.year.unique())
+    prior_accumulator = {}
+    prior_map = {}
+
+    for year in years:
+        year_data = dataset[dataset["date"].dt.year == year]
+        for (m, h, s), group in year_data.groupby(["month", "hour", "slot30"]):
+            if (m, h, s) not in prior_accumulator:
+                prior_accumulator[(m, h, s)] = {"sum": 0.0, "count": 0}
+
+            # Usar a média acumulada ATÉ AO ANO ANTERIOR como prior
+            acc = prior_accumulator[(m, h, s)]
+            if acc["count"] > 0:
+                prior_map[(m, h, s)] = acc["sum"] / acc["count"]
+            else:
+                prior_map[(m, h, s)] = 0.5  # default antes de haver dados
+
+            # Actualizar acumulador com dados do ano actual (para o próximo ano)
+            acc["sum"] += group["label"].sum()
+            acc["count"] += len(group)
+
+    return prior_map
 
 def walk_forward_auc(dataset: pd.DataFrame, params: dict, min_train_years: int = 2) -> dict:
     """Walk-forward real baseado em anos."""

@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone as _tz, timedelta
 from pathlib import Path
 from typing import Optional
+from predictor import set_city, load_models, build_features, predict_ensemble, compute_prev7, init_history_max
+#                                                                                           ^^^^^^^^^^^^^^^^
 
 import numpy as np
 
@@ -96,7 +98,8 @@ class PolymarketFetcher:
         city_lower = self.city.name.lower()
         def is_relevant(e):
             t = str(e.get("title", "")).lower()
-            return (city_lower in t or "temperature" in t or "highest" in t)
+            # Obrigatório: nome da cidade. Opcional: menção a temperatura.
+            return city_lower in t and ("temperature" in t or "highest" in t or "temp" in t)
 
         relevant = [e for e in events if isinstance(e, dict) and is_relevant(e)]
         if not relevant:
@@ -264,7 +267,7 @@ class CityState:
     last_market_min: int = -1
     last_wu_forecast_max: int | None = None
     last_om_forecast_max: int | None = None
-
+    daily_stats: DailyStats = None  # ← NOVO
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -384,14 +387,24 @@ def _tg_alert_stop_loss_blocked(city_name: str, position: dict, current_temp: fl
 # ════════════════════════════════════════════════════
 
 def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> DailyStats:
-    """Executa um tick para uma cidade."""
     city = state.city
     now = bot_now()
     city_today = city_date(city)
 
-    stats = DailyStats(date=city_today)
-    session_stats = SessionStats(start_time=now)
+    # Reset diário (Fix 11)
+    if not hasattr(state, '_last_date'):
+        state._last_date = city_today
+    if city_today != state._last_date:
+        state.slots_so_far = []
+        state.series_today = {}
+        state.cloud_by_hour = {}
+        state.entry = create_strategy(city, mode=state.strategy_mode, parcel_size=PARCEL_SIZE)
+        state._last_date = city_today
+        state.daily_stats = DailyStats(date=city_today)  # ← Reset no novo dia
 
+    # Em vez de: stats = DailyStats(date=city_today)
+    stats = state.daily_stats  # ← Usar o objecto persistente
+    
     # Fetch WU (se disponível)
     new_obs = None
     if city.wu_history_path:
@@ -475,7 +488,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     # Fetch market (a cada 10 minutos ou se não existe)
     h_now = city_now(city).hour
     m_now = city_now(city).minute
-    if state.last_market_min != h_now and m_now < 10:
+    if state.last_market_min != h_now or state.market is None:
         try:
             state.market = state.fetcher.fetch_market(city_today)
             if state.market and state.clob:
@@ -550,18 +563,34 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     ensemble_result = None
 
     if len(state.slots_so_far) >= 4:
+        # ─── FIX 17 & 18: Fallback para dados meteorológicos ───
+        # Se a API falhar (latest_obs é None), usamos o último slot válido
+        # que já está no state.slots_so_far, em vez de meter 0°C ou genéricos.
+        obs = state.latest_obs if state.latest_obs else {}
+        last_slot = state.slots_so_far[-1] if state.slots_so_far else {}
+
+        # Extrair valor: 1º tenta a obs live, 2º tenta o último slot, 3º default seguro
+        _temp       = obs.get("temp_c") if obs.get("temp_c") is not None else last_slot.get("temp_c", 0)
+        _humidity   = obs.get("humidity") if obs.get("humidity") is not None else last_slot.get("humidity", 70)
+        _dewpoint   = obs.get("dewpoint_c") if obs.get("dewpoint_c") is not None else last_slot.get("dewpoint_c", _temp - 10)
+        _pressure   = obs.get("pressure_hpa") if obs.get("pressure_hpa") is not None else last_slot.get("pressure_hpa", 1013)
+        _wind_dir   = obs.get("wind_dir_deg") if obs.get("wind_dir_deg") is not None else last_slot.get("wind_dir_deg", 0)
+        _wind_speed = obs.get("wind_speed_kmh") if obs.get("wind_speed_kmh") is not None else last_slot.get("wind_speed_kmh", 5)
+        _wind_gust  = obs.get("wind_gust_kmh") if obs.get("wind_gust_kmh") is not None else last_slot.get("wind_gust_kmh", 8)
+        _uv_index   = obs.get("uv_index") if obs.get("uv_index") is not None else last_slot.get("uv_index", 3)
+
         current_extra = {
             "hour": h_cur,
             "slot30": s30_cur,
-            "temp_c": state.latest_obs["temp_c"] if state.latest_obs else 0,
+            "temp_c": _temp,
             "cloud_cover": state.cloud_by_hour.get(h_cur, 50),
-            "humidity": state.latest_obs.get("humidity", 70) if state.latest_obs else 70,
-            "dewpoint_c": state.latest_obs.get("dewpoint_c", 0) if state.latest_obs else 0,
-            "pressure_hpa": state.latest_obs.get("pressure_hpa", 1013) if state.latest_obs else 1013,
-            "wind_dir_deg": state.latest_obs.get("wind_dir_deg", 0) if state.latest_obs else 0,
-            "wind_speed_kmh": state.latest_obs.get("wind_speed_kmh", 5) if state.latest_obs else 5,
-            "wind_gust_kmh": state.latest_obs.get("wind_gust_kmh", 8) if state.latest_obs else 8,
-            "uv_index": state.latest_obs.get("uv_index", 3) if state.latest_obs else 3,
+            "humidity": _humidity,
+            "dewpoint_c": _dewpoint,
+            "pressure_hpa": _pressure,
+            "wind_dir_deg": _wind_dir,
+            "wind_speed_kmh": _wind_speed,
+            "wind_gust_kmh": _wind_gust,
+            "uv_index": _uv_index,
             "prev_7d_avg_max": compute_prev7(state.history_max, city_today, city.name),
         }
 
@@ -570,11 +599,21 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             city_today.month, city_today.timetuple().tm_yday
         )
         p_ensemble = ensemble_result["p_ensemble"]
+    
+    # ← INSERIR AQUI (fora do if, cobre também o caso slots < 4)
+    state.last_p_ensemble = p_ensemble
+    state.last_p_lgbm     = ensemble_result.get("p_lgbm") if ensemble_result else None
+
 
     # Trade decision
     if state.entry and state.market and state.clob:
         running_max = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else 0.0
 
+         # ← INSERIR AQUI
+        state.last_target_bracket = PolymarketFetcher.find_bracket(
+            state.market, running_max
+        )
+        
         # Forecast agreement (não usado em single/dual, mantido para compatibilidade)
         forecast_agreement = None
         if city.wu_history_path and wu_forecast_max:
@@ -619,6 +658,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 # bet_record completo (campos necessários para stop-loss + tracking)
                 bet_record = {
                     "city":          city.name,
+                    "hour":          h_cur,        # ← NOVO
+                    "slot30":        s30_cur,      # ← NOVO
                     "bracket":       bracket["label"],
                     "bracket_label": bracket["label"],
                     "ask":           ask,
@@ -751,6 +792,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                 state.entry.mark_sold_by_stop(bid_price, realized_pnl)
                                 stats.stop_losses_triggered += 1
 
+                                stats.daily_pnl += realized_pnl
+
                                 print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
                                 print(f"  {C['yellow']}   Vendido @ {bid_price:.4f}, "
                                       f"PnL={realized_pnl:+.2f}{R}")
@@ -810,16 +853,22 @@ def main():
                         help="Intervalo em segundos entre ticks")
     args = parser.parse_args()
 
-    city_names = [c.strip() for c in args.cities.split(",")]
+    city_names   = [c.strip() for c in args.cities.split(",")]
     trading_mode = TradingMode.REAL if args.run == "real" else TradingMode.PAPER
+    is_multi     = len(city_names) > 1                                           # ← NOVO
+
+    # Import dashboard multi-cidade apenas se necessário                          # ← NOVO
+    if is_multi:                                                                  # ← NOVO
+        from display import extract_display_data, render_dashboard               # ← NOVO
 
     print("=" * 60)
     print(f" {B}Live Bot — Multi-Cidade{R}")
     print("=" * 60)
-    print(f"  Cidades: {', '.join(city_names)}")
-    print(f"  Modo: {args.mode}")
+    print(f"  Cidades:  {', '.join(city_names)}")
+    print(f"  Modo:     {args.mode}")
     print(f"  Execução: {args.run.upper()}")
-    print(f"  Intervalo: {args.interval}s")
+    print(f"  Intervalo:{args.interval}s")
+    print(f"  Dashboard:{'multi-cidade (display.py)' if is_multi else 'mono-cidade (legacy)'}")  # ← NOVO
     print()
 
     # Inicializar estados por cidade
@@ -829,7 +878,6 @@ def main():
         set_city(city_name)
         models = load_models(city_name)
 
-        # Criar estratégia usando factory
         entry = create_strategy(city, mode=args.mode, parcel_size=PARCEL_SIZE)
 
         state = CityState(
@@ -838,9 +886,10 @@ def main():
             models=models,
             entry=entry,
             fetcher=PolymarketFetcher(city),
+            history_max=init_history_max(city_name),  # ← carregar do disco
+            daily_stats=DailyStats(date=city_date(city)),  # ← NOVO
         )
 
-        # WU API key (de environment)
         import os
         state.wu_key = os.environ.get("WU_API_KEY", "")
 
@@ -850,22 +899,18 @@ def main():
         state.wu_sess = make_wu_session()
         state.om_sess = make_om_session()
 
-        # CLOB (para real)
         if args.run == "real":
             private_key = os.environ.get("POLY_PRIVATE_KEY", "")
-            if not private_key:
-                print(f"  {C['red']}{city.name}: POLY_PRIVATE_KEY não definida{R}")
-            else:
-                try:
-                    state.clob = ClobClient(
-                        private_key=private_key,
-                        mode=trading_mode,
-                        max_daily_loss=city.max_daily_loss,
-                        log_dir=LOG_DIR,
-                    )
-                    print(f"  {C['green']}{city.name}: CLOB inicializado{R}")
-                except Exception as e:
-                    print(f"  {C['red']}{city.name}: CLOB init failed: {e}{R}")
+        try:
+            state.clob = ClobClient(
+                private_key=private_key,
+                mode=trading_mode,
+                max_daily_loss=city.max_daily_loss,
+                log_dir=LOG_DIR,
+            )
+            print(f"  {C['green']}{city.name}: CLOB inicializado ({trading_mode.name}){R}")
+        except Exception as e:
+            print(f"  {C['red']}{city.name}: CLOB init failed: {e}{R}")
 
         states[city_name] = state
 
@@ -873,50 +918,89 @@ def main():
     print(f"{DIM}Loop iniciado — Ctrl+C para parar{R}")
     print()
 
-    # ── Fix #5: em REAL mode, bankroll = saldo USDC real (não o --bankroll arg) ──
-    city_bankrolls = {}  # Armazenar bankroll por cidade
-    default_bankroll = PARCEL_SIZE * 100  # $500 default para PAPER
+    city_bankrolls  = {}
+    default_bankroll = PARCEL_SIZE * 100
+    #------
     for city_name in city_names:
         state = states[city_name]
+    
+    #    Atualizar bankroll a cada hora (ou se nunca foi buscado)
         if state.clob and trading_mode == TradingMode.REAL:
-            try:
-                usdc_balance = state.clob.get_usdc_balance()
-                if usdc_balance is not None:
-                    city_bankrolls[city_name] = usdc_balance
-                    print(f"  {C['green']}{city.name}: USDC Balance = ${usdc_balance:.2f}{R}")
-                else:
-                    city_bankrolls[city_name] = default_bankroll
-            except Exception as e:
-                print(f"  {C['yellow']}{city.name}: Erro ao obter saldo: {e}{R}")
-                city_bankrolls[city_name] = default_bankroll
+            h_now = city_now(state.city).hour
+            if not hasattr(state, '_last_bankroll_hour') or state._last_bankroll_hour != h_now:
+                try:
+                    usdc_balance = state.clob.get_usdc_balance()
+                    if usdc_balance is not None:
+                        city_bankrolls[city_name] = usdc_balance
+                    state._last_bankroll_hour = h_now
+                except Exception:
+                    pass
         else:
-            # PAPER mode ou sem CLOB: usar default
             city_bankrolls[city_name] = default_bankroll
     print()
+
+    # Session stats — apenas para dashboard multi-cidade                         # ← NOVO
+    session_stats = {                                                             # ← NOVO
+        "total_trades": 0,                                                       # ← NOVO
+        "total_pnl":    0.0,                                                     # ← NOVO
+        "start_time":   datetime.now(tz=ZoneInfo("Europe/Lisbon")),              # ← NOVO
+    }                                                                            # ← NOVO
+
+    # Daily stats por cidade — para passar ao dashboard                          # ← NOVO
+    daily_stats: dict = {cn: None for cn in city_names}                         # ← NOVO
 
     try:
         while True:
             now = bot_now()
 
             for city_name in city_names:
-                state = states[city_name]
-                city = state.city
+                state      = states[city_name]
+                city       = state.city
                 city_today = city_date(city)
 
-                # Skip fora do horário ativo (hora LOCAL da cidade, não do bot)
                 city_h_now = city_now(city).hour
                 if not (city.day_start <= city_h_now <= city.day_end):
                     continue
 
                 try:
-                    # Passar o bankroll correto para a cidade
                     city_bankroll = city_bankrolls.get(city_name, PARCEL_SIZE * 100)
                     stats = _tick_city(state, args.run, city_bankroll)
+
+                    daily_stats[city_name] = stats                               # ← NOVO
+
+                    # Acumular session stats (multi-cidade)                      # ← NOVO
+                    if is_multi and stats:                                        # ← NOVO
+                        session_stats["total_trades"] += len(getattr(stats, "trades", []))  # ← NOVO
+                        session_stats["total_pnl"]    += getattr(stats, "daily_pnl", 0.0)  # ← NOVO
 
                 except Exception as e:
                     print(f"  {C['red']}{city.name}: Tick failed: {e}{R}")
 
-            # Sleep até próximo tick
+            # ── DISPLAY ──────────────────────────────────────────────────────
+            if is_multi:                                                          # ← NOVO
+                try:                                                              # ← NOVO
+                    cities_display = []                                           # ← NOVO
+                    for cn in city_names:                                         # ← NOVO
+                        cd = extract_display_data(                               # ← NOVO
+                            states[cn],                                          # ← NOVO
+                            daily_stats=daily_stats.get(cn),                    # ← NOVO
+                            bankroll=city_bankrolls.get(cn, default_bankroll),  # ← NOVO
+                        )                                                        # ← NOVO
+                        # p_ensemble e target_bracket guardados pelo _tick_city  # ← NOVO
+                        cd.p_ensemble     = getattr(states[cn], "last_p_ensemble",    0.0)   # ← NOVO
+                        cd.p_lgbm         = getattr(states[cn], "last_p_lgbm",        None)  # ← NOVO
+                        cd.target_bracket = getattr(states[cn], "last_target_bracket", None) # ← NOVO
+                        cities_display.append(cd)                                # ← NOVO
+                                                                                 # ← NOVO
+                    render_dashboard(                                             # ← NOVO
+                        cities_display,                                          # ← NOVO
+                        trading_mode_str=args.run.upper(),                       # ← NOVO
+                        session_stats=session_stats,                             # ← NOVO
+                    )                                                            # ← NOVO
+                except Exception as e:                                            # ← NOVO
+                    print(f"  {C['red']}Dashboard error: {e}{R}")               # ← NOVO
+            # ── single-city: _tick_city já faz os seus próprios prints ─────
+
             time.sleep(args.interval)
 
     except KeyboardInterrupt:
@@ -929,7 +1013,6 @@ def main():
             if stats_path.exists():
                 print(f"  {city_name}: {stats_path}")
         print(f"{C['green']}Done.{R}")
-
 
 if __name__ == "__main__":
     main()

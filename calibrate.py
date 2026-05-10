@@ -43,15 +43,19 @@ _console = Console()
 #  BRACKET CONTAINS PEAK
 # ══════════════════════════════════════════════════════
 def bracket_contains_peak(lo: float, hi: float, peak: float) -> bool:
-    """Verifica se o bracket contém o pico real."""
-    return lo <= peak <= hi
-
+    """Verifica se o bracket contém o pico real (paridade com backtester.py)."""
+    peak_int = int(round(peak))
+    if hi >= 99:
+        return peak_int >= int(round(lo))
+    if lo <= -99:
+        return peak_int <= int(round(hi))
+    return int(round(lo)) <= peak_int <= int(round(hi))
 
 def pnl_per_dollar(ask: float, won: bool) -> float:
-    """PnL por $ investido: (1/ask - 1) se ganha, -ask se perde."""
+    """PnL por $ investido: (1/ask - 1) se ganha, -1.0 se perde."""
     if won:
         return (1.0 / ask) - 1.0
-    return -ask
+    return -1.0
 
 
 # ══════════════════════════════════════════════════════
@@ -77,7 +81,10 @@ def generate_daily_signals(df: pd.DataFrame, models: dict, city: CityConfig) -> 
             day_df = day_df.sort_values(["hour", "slot30"]).reset_index(drop=True)
 
             peak_temp = day_df["temp_c"].max()
-            peak_row = day_df.loc[day_df["temp_c"].idxmax()]
+            peak_matches = day_df[day_df["temp_c"] == peak_temp]
+            if len(peak_matches) == 0:
+                continue
+            peak_row = peak_matches.iloc[-1]  # última ocorrência (paridade com train.py)
             peak_h = int(peak_row["hour"])
             peak_s = int(peak_row["slot30"])
 

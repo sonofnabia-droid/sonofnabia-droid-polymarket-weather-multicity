@@ -289,8 +289,9 @@ def load_data(csv_path: Path, city: CityConfig) -> pd.DataFrame:
         h, m = dt_local.hour, dt_local.minute
         h2, s2 = ceil_slot(h, m)
         if h2 == 24:
-            dt_local = (dt_local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            h2 = 0
+            # Manter no mesmo dia como slot 23:30 (último slot do dia)
+            h2 = 23
+            s2 = 30
         dt_locals.append(dt_local)
         dates.append(dt_local.date())
         hours.append(h2)
@@ -637,7 +638,7 @@ def compute_stats(day_records: list, mode: str, capital_history: list) -> Backte
         total_days    = n,
         total_trades  = int(df[f"{prefix}_correct"].sum() + df[f"{prefix}_premature"].sum()),
         wins          = int(correct_mask.sum()),
-        losses        = int((~correct_mask).sum()),
+        losses        = int((~correct_mask & ~df[f"{prefix}_missed"]).sum()),
         correct_pct   = round(correct_mask.mean() * 100, 1),
         premature_pct = round(df[f"{prefix}_premature"].mean() * 100, 1),
         missed_pct    = round(df[f"{prefix}_missed"].mean() * 100, 1),

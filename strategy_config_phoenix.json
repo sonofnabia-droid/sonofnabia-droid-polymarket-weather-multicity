@@ -1,0 +1,24 @@
+{
+  "single": {
+    "threshold": 0.725,
+    "hour_min": 14,
+    "stop_loss_delta": 1.0
+  },
+  "_meta": {
+    "outcome_score": 221.6056,
+    "win_pct": 93.95,
+    "trades_per_year": 227.5,
+    "n_trades": 991,
+    "median_lag_h": 0.0,
+    "data_period": [
+      "2022-01-01",
+      "2026-05-09"
+    ],
+    "n_days": 1590,
+    "metric": "outcome",
+    "mode": "standard",
+    "years": 5,
+    "calibrated_at": "2026-05-10T11:13:19",
+    "calibrated_with": "calibrate_all.py"
+  }
+}
