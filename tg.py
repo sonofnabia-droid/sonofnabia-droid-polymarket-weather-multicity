@@ -379,7 +379,6 @@ class TG:
                   om_forecast=None,
                   forecast_agreement=None,
                   ensemble_result=None,
-                  phased=None,
                   usdc_balance=None,
                   bet_blocked_reason=None):
         """
@@ -424,9 +423,9 @@ class TG:
             "",
         ]
 
-        # ── Dual Forecast ─────────────────────────────
+        # ── Forecast ──────────────────────────────────
         if om_forecast:
-            lines.append("🌤 <b>Previsão Dual</b>")
+            lines.append("🌤 <b>Previsão</b>")
             if forecast_max:
                 lines.append(
                     f"  🟦 WU: max <b>{forecast_max['temp_max']}°C</b>"
@@ -463,54 +462,6 @@ class TG:
             lines.append("🧠 <b>Modelo — P(pico)</b>")
             lines.append(f"  {p_bar}  <b>{p*100:.1f}%</b>{peak_str}")
             lines.append("")
-
-        # ── Estratégia (Single ou Phased) ─────────────
-        if phased is not None:
-            is_single = (hasattr(phased, 'bought')
-                         and not hasattr(phased, 'parcel_bought'))
-            # check robusto: SingleEntry tem parcel_bought property mas é lista [b, F, F]
-            # melhor verificar n_parcels_bought vs parcel_size
-            try:
-                if isinstance(phased.parcel_bought, list) and \
-                   sum(1 for x in phased.parcel_bought if x is not False) <= 1 and \
-                   not phased.parcel_bought[1] and not phased.parcel_bought[2]:
-                    is_single = True
-            except Exception:
-                pass
-
-            if is_single:
-                # SingleEntry
-                lines.append("🎯 <b>Estratégia SINGLE</b>")
-                if phased.bought:
-                    if getattr(phased, 'sold_by_stop', False):
-                        lines.append(
-                            f"  ${phased.parcel_size:.0f}  "
-                            f"⚠️ vendido por stop-loss"
-                        )
-                    else:
-                        lines.append(
-                            f"  ${phased.parcel_size:.0f}  ✅ comprado"
-                        )
-                else:
-                    lines.append(
-                        f"  ${phased.parcel_size:.0f}  ⏳ aguardar sinal"
-                    )
-                lines.append("")
-            else:
-                # PhasedEntry
-                p_icons_done = ["✅🌅", "✅⚡", "✅🔥"]
-                p_icons_wait = ["⬜🌅", "⬜⚡", "⬜🔥"]
-                parts = [p_icons_done[i] if phased.parcel_bought[i]
-                         else p_icons_wait[i] for i in range(3)]
-                total_inv = phased.total_invested
-                total_max = phased.parcel_size * 3
-                lines.append("🎯 <b>Estratégia PHASED</b>")
-                lines.append(
-                    f"  {' '.join(parts)}  "
-                    f"({phased.n_parcels_bought}/3  "
-                    f"${total_inv:.0f}/${total_max:.0f})"
-                )
-                lines.append("")
 
         # ── Bet bloqueada ─────────────────────────────
         if bet_blocked_reason:

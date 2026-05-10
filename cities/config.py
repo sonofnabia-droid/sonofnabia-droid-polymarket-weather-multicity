@@ -3,43 +3,12 @@ cities/config.py
 ================
 Configuração de cidades para sistema multi-cidade.
 
-Contém CityConfig dataclass, StrategyConfig, ForecastConfidenceConfig
-e CITIES dict com configuração de Munich, Dallas e Ankara.
+Contém CityConfig dataclass e CITIES dict com configuração das cidades.
 """
 
 from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
-
-
-@dataclass
-class ForecastConfidenceConfig:
-    """Configuração do Forecast Confidence por cidade."""
-    enabled: bool = False
-    accuracy_by_month: dict[int, float] = field(default_factory=dict)
-    margin: float = 0.05
-
-    def __post_init__(self):
-        if not self.accuracy_by_month and self.enabled:
-            # Valores padrão baseados em POLY-IRIS
-            self.accuracy_by_month = {
-                1: 0.72, 2: 0.75, 3: 0.78, 4: 0.82, 5: 0.85, 6: 0.83,
-                7: 0.80, 8: 0.80, 9: 0.82, 10: 0.78, 11: 0.74, 12: 0.71,
-            }
-
-
-@dataclass
-class DualStrategyConfig:
-    """Configuração do Dual Strategy por cidade."""
-    enabled: bool = False
-    parcel_size: float = 5.0
-    fc_hour_min: int = 10
-    fc_hour_max: int = 14
-    fc_p_min: float = 0.75
-    fc_ev_margin: float = 0.05
-    pk_threshold: float = 0.650
-    pk_hour_min: int = 11
-    stop_loss_delta: float = 1.0
 
 
 @dataclass
@@ -54,11 +23,9 @@ class SingleEntryConfig:
 
 @dataclass
 class StrategyConfig:
-    """Configuração de estratégias por cidade."""
-    mode: str = "single"  # "single", "dual"
+    """Configuração de estratégia por cidade."""
+    mode: str = "single"
     single: SingleEntryConfig = field(default_factory=SingleEntryConfig)
-    dual: DualStrategyConfig = field(default_factory=DualStrategyConfig)
-    forecast_confidence: ForecastConfidenceConfig = field(default_factory=ForecastConfidenceConfig)
 
 
 @dataclass

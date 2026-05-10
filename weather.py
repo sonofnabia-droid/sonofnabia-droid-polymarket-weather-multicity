@@ -11,14 +11,14 @@ Exporta:
   make_om_session()
   fetch_wu_day(city, day, api_key, session)
   fetch_wu_latest(city, api_key, session)
-  fetch_wu_forecast_max(city, api_key, session)
-  fetch_om_forecast_max(city, session)
+  fetch_wu_forecast_max(city, api_key, session)      # informativo/dashboard
+  fetch_om_forecast_max(city, session)               # informativo/dashboard
   fetch_om_hourly_today(city, session)
   fetch_om_latest(city, session)
   bootstrap_today(city, api_key, session)       -> (series_dict, slots_list)
   bootstrap_om_today(city, session)             -> (series_dict, slots_list)
   cloud_from_series(series_today, rows_cache)
-  forecasts_agree(wu_forecast, om_forecast)
+  forecasts_agree(wu_forecast, om_forecast)     # informativo/dashboard
 """
 
 import requests

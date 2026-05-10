@@ -5,7 +5,6 @@ Factory para criar a estratégia correcta.
 
 Modos disponíveis (via CLI --mode):
 - single: SingleEntry (1 compra + stop-loss)
-- dual: DualStrategy (Forecast Early + Peak Detection)
 """
 import sys
 from pathlib import Path
@@ -13,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cities.config import CityConfig
 from modules.single_entry import SingleEntry
-from modules.dual_strategy import DualStrategy
 
 
 def create_strategy(city_config: CityConfig, mode: str = "single", **kwargs):
@@ -22,18 +20,13 @@ def create_strategy(city_config: CityConfig, mode: str = "single", **kwargs):
 
     if mode == "single":
         return SingleEntry(city_config, **kwargs)
-    elif mode == "dual":
-        return DualStrategy(city_config, **kwargs)
-    else:
-        raise ValueError(f"Modo desconhecido: {mode}. Disponíveis: single, dual")
+    raise ValueError(f"Modo desconhecido: {mode}. Disponível: single")
 
 
 def get_strategy_name(mode: str) -> str:
     mode = mode.lower()
     if mode == "single":
         return "SingleEntry"
-    elif mode == "dual":
-        return "DualStrategy"
     return "Unknown"
 
 
@@ -47,10 +40,9 @@ if __name__ == "__main__":
     city = get_city("munich")
     print(f"\nCity: {city.name}")
 
-    for mode in ["single", "dual"]:
-        strategy = create_strategy(city, mode)
-        print(f"\n  Mode: {mode}")
-        print(f"  Strategy: {get_strategy_name(mode)}")
-        print(f"  Instance: {type(strategy).__name__}")
+    strategy = create_strategy(city, "single")
+    print("\n  Mode: single")
+    print(f"  Strategy: {get_strategy_name('single')}")
+    print(f"  Instance: {type(strategy).__name__}")
 
     print("\nOK")

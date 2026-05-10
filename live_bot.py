@@ -24,8 +24,8 @@ import numpy as np
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, build_features, predict_ensemble, compute_prev7
 from weather import (
-    make_wu_session, make_om_session, fetch_wu_latest, fetch_wu_forecast_max,
-    fetch_om_forecast_max, fetch_om_hourly_today, forecasts_agree,
+    make_wu_session, make_om_session, fetch_wu_latest,
+    fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
     bootstrap_today, bootstrap_om_today,
 )
 from modules.strategy_factory import create_strategy
@@ -257,12 +257,12 @@ class CityState:
     """Estado de uma cidade no bot multi-cidade."""
     city: CityConfig
     models: dict
-    strategy_mode: str = "single"  # "single", "dual"
+    strategy_mode: str = "single"
     slots_so_far: list[dict] = field(default_factory=list)
     series_today: dict[tuple, float] = field(default_factory=dict)
     cloud_by_hour: dict[int, int] = field(default_factory=dict)
     history_max: dict = field(default_factory=dict)
-    entry: any = None  # SingleEntry ou DualStrategy
+    entry: any = None
     market: dict | None = None
     fetcher: PolymarketFetcher | None = None
     wu_key: str = ""
@@ -271,10 +271,10 @@ class CityState:
     clob: ClobClient | None = None
     trading_mode: TradingMode = TradingMode.PAPER
     latest_obs: dict | None = None
-    last_forecast_min: int = -1
-    last_market_min: tuple[int, int] | None = None
+    last_forecast_hour: int = -1
     last_wu_forecast_max: int | None = None
     last_om_forecast_max: int | None = None
+    last_market_min: tuple[int, int] | None = None
     daily_stats: DailyStats = None  # ← NOVO
 
 # ════════════════════════════════════════════════════
@@ -484,29 +484,24 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
     state.latest_obs = new_obs
 
-    # Fetch forecasts para Dual Strategy (apenas WU/OM, a cada hora)
-    wu_forecast_max = None
-    om_forecast_max = None
-
-    if state.strategy_mode == "dual" and city.wu_history_path:
-        h_now = city_now(city).hour
-        m_now = city_now(city).minute
-
-        # Fetch forecasts a cada hora (minutos 0-5)
-        if state.last_forecast_min != h_now and m_now < 5:
-            try:
-                wu_forecast_max = fetch_wu_forecast_max(city, state.wu_key, state.wu_sess)
-                om_forecast_max = fetch_om_forecast_max(city, state.om_sess)
-
-                state.last_wu_forecast_max = wu_forecast_max
-                state.last_om_forecast_max = om_forecast_max
-                state.last_forecast_min = h_now
-            except Exception as e:
-                print(f"  {C['yellow']}Forecast fetch failed: {e}{R}")
-        else:
-            # Usar forecast cacheado
-            wu_forecast_max = state.last_wu_forecast_max
-            om_forecast_max = state.last_om_forecast_max
+    # Forecasts apenas informativos para dashboard/alertas; não entram na decisão.
+    h_forecast = city_now(city).hour
+    if state.last_forecast_hour != h_forecast:
+        try:
+            wu_forecast = (
+                fetch_wu_forecast_max(city, state.wu_key, state.wu_sess)
+                if city.wu_history_path else None
+            )
+            om_forecast = fetch_om_forecast_max(city, state.om_sess)
+            state.last_wu_forecast_max = (
+                wu_forecast.get("temp_max") if isinstance(wu_forecast, dict) else None
+            )
+            state.last_om_forecast_max = (
+                om_forecast.get("temp_max") if isinstance(om_forecast, dict) else None
+            )
+            state.last_forecast_hour = h_forecast
+        except Exception as e:
+            print(f"  {C['yellow']}{city.name}: Forecast fetch failed: {e}{R}")
 
     # Atualizar slots
     if new_obs:
@@ -558,7 +553,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             print(f"  {C['yellow']}{city.name}: Fetch market failed: {e}{R}")
 
     # ── Anti-duplicado: verificar DUAS fontes ──
-    if state.strategy_mode in ("single", "dual") and state.entry and state.clob:
+    if state.entry and state.clob:
         _skip = False
         _rec = None
         current_market_slug = state.fetcher.date_to_slug(city_today)
@@ -597,11 +592,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         "temp_lo": getattr(_pos, 'temp_lo', None),
                         "token_id": getattr(_pos, 'token_id', None),
                         "size_usdc": getattr(_pos, 'size_usdc', None),
-                        "strategy": (
-                            "forecast_early"
-                            if "FORECAST" in getattr(_pos, 'bracket_label', '').upper()
-                            else "peak_detection"
-                        ),
+                        "strategy": "single",
                     }
             except Exception:
                 pass
@@ -674,46 +665,13 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             state.market, running_max
         )
         
-        # Forecast agreement (não usado em single/dual, mantido para compatibilidade)
-        forecast_agreement = None
-        if city.wu_history_path and wu_forecast_max:
-            om_max = om_forecast_max if om_forecast_max else wu_forecast_max
-            forecast_agreement = forecasts_agree(wu_forecast_max, om_max)
-
-        wu_forecast_temp = (
-            wu_forecast_max.get("temp_max")
-            if isinstance(wu_forecast_max, dict)
-            else wu_forecast_max
+        actions = state.entry.evaluate(
+            p_ensemble=p_ensemble,
+            hour=h_cur,
+            market=state.market,
+            running_max=running_max,
+            forecast_agreement=None,
         )
-        om_forecast_temp = (
-            om_forecast_max.get("temp_max")
-            if isinstance(om_forecast_max, dict)
-            else om_forecast_max
-        )
-
-        # Avaliar estratégia
-        if state.strategy_mode == "dual":
-            actions = state.entry.evaluate(
-                p_peak=p_ensemble,
-                hour=h_cur,
-                market=state.market,
-                running_max=running_max,
-                wu_forecast_max=wu_forecast_temp,
-                om_forecast_max=om_forecast_temp,
-                cloud_cover=state.cloud_by_hour.get(h_cur, 50),
-                humidity=state.latest_obs.get("humidity", 70) if state.latest_obs else 70,
-                month=city_today.month,
-                uv_index=state.latest_obs.get("uv_index", 3) if state.latest_obs else 3,
-            )
-        else:
-            # SingleEntry e DualStrategy
-            actions = state.entry.evaluate(
-                p_ensemble=p_ensemble,
-                hour=h_cur,
-                market=state.market,
-                running_max=running_max,
-                forecast_agreement=forecast_agreement,
-            )
 
         # Processar ações (primeira que tenha size > 0)
         for action in actions:
@@ -812,7 +770,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 break  # Apenas uma ação por tick
 
     # ─── STOP-LOSS CHECK ────────────────────────────
-    if state.strategy_mode in ("single", "dual") and state.entry and state.clob and state.latest_obs:
+    if state.entry and state.clob and state.latest_obs:
         current_temp = state.latest_obs["temp_c"]
         if hasattr(state.entry, 'check_stop_loss'):
             stop_signal = state.entry.check_stop_loss(current_temp)
@@ -911,23 +869,12 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     if state.latest_obs:
         rmax = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else state.latest_obs["temp_c"]
 
-        # Mostrar forecast para Dual Strategy
-        fc_str = ""
-        if state.strategy_mode == "dual" and wu_forecast_max:
-            wu_forecast_temp = (
-                wu_forecast_max.get("temp_max")
-                if isinstance(wu_forecast_max, dict)
-                else wu_forecast_max
-            )
-            fc_str = f"FC: {wu_forecast_temp}°C | "
-
         print(f"{C['cyan']}{city.name.upper():<8}{R} "
               f"{h_cur:02d}:{s30_cur:02d} | "
               f"Temp: {state.latest_obs['temp_c']:>5.1f}°C | "
               f"RMax: {rmax:>5.1f}°C | "
-              f"{fc_str}"
               f"P: {p_ensemble:>4.2f} | "
-              f"Mode: {state.strategy_mode.upper()[0]} | "
+              f"Mode: SINGLE | "
               f"Bought: {state.entry.bought if state.entry else 'No'}")
 
     _save_daily_stats(stats, city.name)
@@ -942,8 +889,8 @@ def main():
     parser = argparse.ArgumentParser(description="Live Bot Multi-Cidade")
     parser.add_argument("--cities", type=str, default="munich",
                         help="Cidades separadas por vírgula (ex: munich,dallas)")
-    parser.add_argument("--mode", type=str, default="single", choices=["single", "dual"],
-                        help="Modo de estratégia: single, dual")
+    parser.add_argument("--mode", type=str, default="single", choices=["single"],
+                        help="Modo de estratégia: single")
     parser.add_argument("--run", type=str, default="paper", choices=["paper", "real"],
                         help="Modo de execução: paper, real")
     parser.add_argument("--interval", type=int, default=30,
