@@ -20,10 +20,12 @@ Integração com live_bot.py (no fim do loop principal):
     render_dashboard(cities_display, trading_mode_str=args.run.upper(), session_stats=session_stats)
 """
 
+import json
 import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, date
+from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -43,6 +45,8 @@ except ImportError:
     _HAS_CLOB = False
 
 _con = Console()
+LOG_DIR = Path("live_bot_logs")
+SNAPSHOT_PATH = LOG_DIR / "live_snapshot.json"
 
 # ══════════════════════════════════════════════════════════════════════
 #  FLAGS E LABELS
@@ -68,6 +72,12 @@ _PRETTY = {
 
 def _flag(name: str)  -> str: return _FLAGS.get(name, "🌍")
 def _label(name: str) -> str: return _PRETTY.get(name, name.replace("_", " ").title())
+
+
+def _json_default(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -624,6 +634,119 @@ def _positions_table(city_data: list["CityDisplayData"], trading_mode_str: str) 
     return tbl
 
 
+def _position_to_snapshot(pos) -> dict:
+    if pos is None:
+        return {}
+    if isinstance(pos, dict):
+        return dict(pos)
+    data = {}
+    for key in (
+        "date_opened", "bracket_label", "token_id", "entry_ask", "shares",
+        "size_usdc", "mode", "order_id", "market_slug", "temp_lo", "temp_hi",
+        "current_mid", "pnl_usd", "pnl_pct", "last_updated",
+    ):
+        data[key] = getattr(pos, key, None)
+    status = getattr(pos, "status", None)
+    data["status"] = getattr(status, "value", status)
+    return data
+
+
+def _city_to_snapshot(cd: "CityDisplayData") -> dict:
+    city_dt = datetime.now(tz=ZoneInfo(cd.city.timezone))
+    threshold = cd.city.threshold if cd.city.threshold is not None else 0.65
+    hour_min = cd.city.hour_min if cd.city.hour_min is not None else 14
+    status_label, _ = _city_status(cd)
+    brackets = []
+    if cd.market:
+        for b in cd.market.get("brackets", [])[:12]:
+            brackets.append({
+                "label": b.get("label"),
+                "ask": b.get("ask") or b.get("price"),
+                "bid": b.get("bid"),
+                "temp_lo": b.get("temp_lo"),
+                "temp_hi": b.get("temp_hi"),
+                "token_id": b.get("token_id"),
+            })
+
+    return {
+        "name": cd.city.name,
+        "label": _label(cd.city.name),
+        "flag": _flag(cd.city.name),
+        "timezone": cd.city.timezone,
+        "local_time": city_dt.isoformat(),
+        "local_hm": city_dt.strftime("%H:%M"),
+        "day_start": cd.city.day_start,
+        "day_end": cd.city.day_end,
+        "threshold": threshold,
+        "hour_min": hour_min,
+        "status": status_label,
+        "temp": cd.temp,
+        "running_max": cd.running_max,
+        "p_ensemble": cd.p_ensemble,
+        "p_lgbm": cd.p_lgbm,
+        "slots": cd.slots_so_far[-96:],
+        "wu_forecast": cd.wu_forecast,
+        "om_forecast": cd.om_forecast,
+        "forecast_agree": cd.forecast_agree,
+        "market": {
+            "title": cd.market.get("title") if cd.market else None,
+            "volume": cd.market.get("volume") if cd.market else None,
+            "n_outcomes": cd.market.get("n_outcomes") if cd.market else None,
+            "brackets": brackets,
+        },
+        "target_bracket": cd.target_bracket,
+        "bought": cd.bought,
+        "position": cd.position,
+        "positions_all": [_position_to_snapshot(p) for p in cd.positions_all],
+        "daily_pnl": cd.daily_pnl,
+        "n_trades": cd.n_trades,
+        "daily_loss": cd.daily_loss,
+        "max_daily_loss": cd.max_daily_loss,
+        "bankroll": cd.bankroll,
+        "humidity": cd.humidity,
+        "cloud_cover": cd.cloud_cover,
+        "stop_loss_hit": cd.stop_loss_hit,
+    }
+
+
+def write_live_snapshot(
+    city_data: list["CityDisplayData"],
+    trading_mode_str: str = "PAPER",
+    session_stats: dict | None = None,
+) -> None:
+    """Grava snapshot read-only para dashboard web, sem depender do Flask."""
+    session_stats = session_stats or {}
+    LOG_DIR.mkdir(exist_ok=True)
+    now = datetime.now(tz=ZoneInfo("Europe/Lisbon"))
+    cities = [_city_to_snapshot(cd) for cd in city_data]
+    payload = {
+        "generated_at": now.isoformat(),
+        "trading_mode": trading_mode_str,
+        "session": {
+            "total_trades": session_stats.get("total_trades", 0),
+            "total_pnl": session_stats.get("total_pnl", 0.0),
+            "start_time": session_stats.get("start_time"),
+        },
+        "summary": {
+            "n_cities": len(cities),
+            "n_bought": sum(1 for c in cities if c.get("bought")),
+            "n_signal": sum(
+                1 for c in cities
+                if not c.get("bought")
+                and (c.get("p_ensemble") or 0) >= (c.get("threshold") or 0.65)
+            ),
+            "n_stop": sum(1 for c in cities if c.get("stop_loss_hit")),
+            "daily_pnl": sum(c.get("daily_pnl") or 0 for c in cities),
+            "daily_trades": sum(c.get("n_trades") or 0 for c in cities),
+            "bankroll": sum(c.get("bankroll") or 0 for c in cities),
+        },
+        "cities": cities,
+    }
+    tmp_path = SNAPSHOT_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, default=_json_default))
+    tmp_path.replace(SNAPSHOT_PATH)
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════
@@ -644,6 +767,8 @@ def render_dashboard(
     """
     if session_stats is None:
         session_stats = {}
+
+    write_live_snapshot(city_data, trading_mode_str, session_stats)
 
     os.system("clear" if os.name != "nt" else "cls")
 

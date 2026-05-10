@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polymarket Temp Bot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Polymarket Temperature Bot</div>
+        <h1>Multi-City Live Desk</h1>
+      </div>
+      <div class="top-actions">
+        <div id="connection" class="pill neutral">A ligar</div>
+        <div id="mode" class="pill">UNKNOWN</div>
+      </div>
+    </header>
+
+    <section class="metrics">
+      <article class="metric">
+        <span>Cidades</span>
+        <strong id="m-cities">--</strong>
+      </article>
+      <article class="metric">
+        <span>Sinais</span>
+        <strong id="m-signals">--</strong>
+      </article>
+      <article class="metric">
+        <span>Posições</span>
+        <strong id="m-positions">--</strong>
+      </article>
+      <article class="metric">
+        <span>PnL dia</span>
+        <strong id="m-pnl">--</strong>
+      </article>
+      <article class="metric">
+        <span>Trades</span>
+        <strong id="m-trades">--</strong>
+      </article>
+      <article class="metric">
+        <span>Atualizado</span>
+        <strong id="m-updated">--</strong>
+      </article>
+    </section>
+
+    <main class="layout">
+      <section>
+        <div class="section-head">
+          <h2>Cidades</h2>
+          <div class="hint" id="source">--</div>
+        </div>
+        <div id="city-grid" class="city-grid"></div>
+      </section>
+
+      <aside class="side">
+        <section class="panel">
+          <div class="section-head compact">
+            <h2>Posições</h2>
+            <span id="position-count" class="hint">0</span>
+          </div>
+          <div id="positions" class="positions"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head compact">
+            <h2>Mercados Ativos</h2>
+            <span class="hint">top asks</span>
+          </div>
+          <div id="markets" class="markets"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
