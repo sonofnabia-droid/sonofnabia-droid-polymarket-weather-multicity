@@ -12,6 +12,7 @@ Uso:
     python calibrate_all.py --cities munich,dallas    # subset
     python calibrate_all.py --mode full               # mode override
     python calibrate_all.py --years 3                 # menos anos
+    python calibrate_all.py --windows 3,5,7,10        # compara janelas e escolhe por validação
     python calibrate_all.py --dry-run                 # ver sem escrever
     python calibrate_all.py --force-write             # ignora margem (escreve sempre)
     python calibrate_all.py --margin 0.10             # margem 10% (default 5%)
@@ -33,7 +34,7 @@ from rich.table import Table
 from rich import box as rich_box
 
 from cities.config import CITIES
-from calibrate import run_calibration
+from calibrate import parse_windows_arg, print_window_comparison, run_calibration
 
 
 _console = Console()
@@ -118,6 +119,8 @@ def write_config(city_name: str, calibration: dict, existing: dict | None) -> Pa
         "validation_years":  calibration.get("validation_years", []),
         "selection":         calibration.get("selection"),
         "validation":        calibration.get("validation"),
+        "windows_considered": calibration.get("windows_considered"),
+        "chosen_by":          calibration.get("chosen_by"),
         "n_days":           calibration["n_days"],
         "metric":           calibration["metric"],
         "mode":             calibration["mode"],
@@ -162,6 +165,55 @@ def decide_action(new_cal: dict, old_cfg: dict | None,
 
     diff_pct = (new_score - old_score) / old_score * 100 if old_score else 0
     return "KEEP", f"{diff_pct:+.1f}% (below {margin*100:.0f}% threshold)"
+
+
+def _window_choice_score(calibration: dict, metric: str) -> float:
+    key = "outcome_score" if metric == "outcome" else "roi_pct"
+    score_block = calibration.get("validation") or calibration.get("selection") or calibration
+    return float(score_block.get(key, 0.0) or 0.0)
+
+
+def run_window_calibration(
+    city_name: str,
+    windows: list[int],
+    mode: str,
+    metric: str,
+    realistic: bool,
+) -> dict | None:
+    """Calibra várias janelas para uma cidade e escolhe pela validação."""
+    results = []
+    for years in windows:
+        _console.rule(f"[bold cyan]{city_name} — janela {years} anos[/bold cyan]")
+        cal = run_calibration(
+            city_name=city_name,
+            years=years,
+            mode=mode,
+            metric=metric,
+            realistic=realistic,
+            quiet=False,
+        )
+        if cal is None:
+            _console.print(f"  [yellow]{city_name}: sem resultado para janela {years}[/yellow]")
+            continue
+        results.append(cal)
+
+    if not results:
+        return None
+
+    print_window_comparison(results, metric)
+    best = max(results, key=lambda c: _window_choice_score(c, metric))
+    best = dict(best)
+    best["windows_considered"] = windows
+    best["chosen_by"] = (
+        f"validation_{'outcome_score' if metric == 'outcome' else 'roi_pct'}"
+        if best.get("validation")
+        else f"selection_{'outcome_score' if metric == 'outcome' else 'roi_pct'}"
+    )
+    _console.print(
+        f"  [green]Escolhida janela {best['years']} anos[/green] "
+        f"({best['chosen_by']}={_window_choice_score(best, metric):.3f})"
+    )
+    return best
 
 
 # ════════════════════════════════════════════════════════
@@ -246,6 +298,8 @@ def main():
                         help="Cidades separadas por vírgula. Default: todas em CITIES.")
     parser.add_argument("--years", type=int, default=5,
                         help="Anos de histórico (default 5)")
+    parser.add_argument("--windows", type=parse_windows_arg, default=None,
+                        help="Compara janelas e escolhe por validação, ex: --windows 3,5,7,10")
     parser.add_argument("--mode", choices=["fast", "standard", "detailed", "full"],
                         default="standard",
                         help="Densidade do grid (default: standard)")
@@ -281,7 +335,11 @@ def main():
     _console.print(f"  Cidades:    {', '.join(city_names)}")
     _console.print(f"  Modo grid:  {args.mode}")
     _console.print(f"  Métrica:    {args.metric}")
-    _console.print(f"  Anos:       {args.years}")
+    if args.windows:
+        _console.print(f"  Janelas:    {','.join(str(w) for w in args.windows)}")
+        _console.print("  Escolha:    melhor validação por janela")
+    else:
+        _console.print(f"  Anos:       {args.years}")
     _console.print(f"  Margin:     {args.margin*100:.0f}% (mínimo para sobrescrever)")
     if args.dry_run:
         _console.print("  [yellow]DRY-RUN: nenhum ficheiro será escrito[/yellow]")
@@ -300,14 +358,23 @@ def main():
 
         # Calibrar
         try:
-            cal = run_calibration(
-                city_name=city_name,
-                years=args.years,
-                mode=args.mode,
-                metric=args.metric,
-                realistic=args.realistic,
-                quiet=False,
-            )
+            if args.windows:
+                cal = run_window_calibration(
+                    city_name=city_name,
+                    windows=args.windows,
+                    mode=args.mode,
+                    metric=args.metric,
+                    realistic=args.realistic,
+                )
+            else:
+                cal = run_calibration(
+                    city_name=city_name,
+                    years=args.years,
+                    mode=args.mode,
+                    metric=args.metric,
+                    realistic=args.realistic,
+                    quiet=False,
+                )
         except Exception as e:
             _console.print(f"  [red]Failed: {e}[/red]")
             rows.append({"city": city_name, "error": str(e)})
