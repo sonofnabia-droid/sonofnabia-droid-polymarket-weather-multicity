@@ -88,7 +88,7 @@ def _get_wu_url(city: CityConfig) -> str | None:
     """Retorna URL WU para a cidade, ou None se não disponível."""
     if not city.wu_history_path:
         return None
-    return f"{WU_BASE}/{city.icao}:9:DE/observations/historical.json"
+    return f"{WU_BASE}/{city.wu_history_path}/observations/historical.json"
 
 
 def _wu_parse_obs(obs_list: list, city_tz: ZoneInfo) -> list[dict]:

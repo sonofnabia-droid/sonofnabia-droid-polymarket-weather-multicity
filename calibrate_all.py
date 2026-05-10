@@ -38,7 +38,7 @@ from calibrate import run_calibration
 
 _console = Console()
 
-DEFAULT_MIN_IMPROVEMENT = 0.01  # 5%
+DEFAULT_MIN_IMPROVEMENT = 0.05  # 5%
 
 
 # ════════════════════════════════════════════════════════

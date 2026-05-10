@@ -40,8 +40,13 @@ FEATURE_COLS = [
 
 
 def load_csv(csv_path: Path):
-    df = pd.read_csv(csv_path)
-    if "date" in df.columns and isinstance(df["date"].iloc[0], str):
+    with open(csv_path, "r", encoding="utf-8") as f:
+        first = f.readline()
+    sep = "\t" if "\t" in first else ","
+
+    df = pd.read_csv(csv_path, sep=sep, low_memory=False)
+
+    if "date" in df.columns and len(df) > 0 and isinstance(df["date"].iloc[0], str):
         # Auto-detect format: try dayfirst, if fails use default
         try:
             df["date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
@@ -193,55 +198,62 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
 
     dataset = pd.DataFrame(rows)
 
-    # Prior sazonal — calcular apenas com dados passados por defeito
-    prior_map = _compute_expanding_prior(dataset)
+    # Prior sazonal: cada linha usa apenas anos anteriores; o mapa final usa
+    # todo o histórico e é guardado para inferência live.
+    prior_values, prior_map = _compute_expanding_prior(dataset)
     set_seasonal_prior(prior_map)
-    dataset["seasonal_peak_prior"] = dataset.apply(
-        lambda r: prior_map.get((r["month"], r["hour"], r["slot30"]), 0.5),
-        axis=1,
-    )
+    dataset["seasonal_peak_prior"] = prior_values
     return dataset, prior_map
 
 
-def _compute_expanding_prior(dataset: pd.DataFrame) -> dict:
-    """Computa seasonal prior com expanding window (sem data leakage)."""
+def _compute_expanding_prior(dataset: pd.DataFrame) -> tuple[pd.Series, dict]:
+    """Computa prior por linha sem leakage e mapa final para live."""
     if "date" not in dataset.columns:
-        # Fallback: sem datas, usar média global
+        # Fallback: sem datas, usar média por slot e aplicar ao próprio dataset.
         prior_map = {}
         for (m, h, s), group in dataset.groupby(["month", "hour", "slot30"]):
-            prior_map[(m, h, s)] = group["label"].mean()
-        return prior_map
+            prior_map[(int(m), int(h), int(s))] = float(group["label"].mean())
+        prior_values = dataset.apply(
+            lambda r: prior_map.get((int(r["month"]), int(r["hour"]), int(r["slot30"])), 0.5),
+            axis=1,
+        )
+        return prior_values, prior_map
 
     if not pd.api.types.is_datetime64_any_dtype(dataset["date"]):
         dataset = dataset.copy()
         dataset["date"] = pd.to_datetime(dataset["date"], errors="coerce")
 
-    # Ordenar por data
-    dataset = dataset.sort_values("date").reset_index(drop=True)
+    sorted_dataset = dataset.sort_values("date")
+    prior_values = pd.Series(0.5, index=dataset.index, dtype=float)
 
-    # Para cada ano, calcular prior apenas com anos anteriores
-    years = sorted(dataset["date"].dt.year.unique())
+    # Para cada ano, calcular prior apenas com anos anteriores.
+    years = sorted(sorted_dataset["date"].dropna().dt.year.unique())
     prior_accumulator = {}
-    prior_map = {}
 
     for year in years:
-        year_data = dataset[dataset["date"].dt.year == year]
+        year_data = sorted_dataset[sorted_dataset["date"].dt.year == year]
+
+        for idx, row in year_data.iterrows():
+            key = (int(row["month"]), int(row["hour"]), int(row["slot30"]))
+            acc = prior_accumulator.get(key)
+            if acc and acc["count"] > 0:
+                prior_values.at[idx] = acc["sum"] / acc["count"]
+
         for (m, h, s), group in year_data.groupby(["month", "hour", "slot30"]):
-            if (m, h, s) not in prior_accumulator:
-                prior_accumulator[(m, h, s)] = {"sum": 0.0, "count": 0}
-
-            # Usar a média acumulada ATÉ AO ANO ANTERIOR como prior
-            acc = prior_accumulator[(m, h, s)]
-            if acc["count"] > 0:
-                prior_map[(m, h, s)] = acc["sum"] / acc["count"]
-            else:
-                prior_map[(m, h, s)] = 0.5  # default antes de haver dados
-
-            # Actualizar acumulador com dados do ano actual (para o próximo ano)
+            key = (int(m), int(h), int(s))
+            if key not in prior_accumulator:
+                prior_accumulator[key] = {"sum": 0.0, "count": 0}
+            acc = prior_accumulator[key]
             acc["sum"] += group["label"].sum()
             acc["count"] += len(group)
 
-    return prior_map
+    prior_map = {
+        key: acc["sum"] / acc["count"]
+        for key, acc in prior_accumulator.items()
+        if acc["count"] > 0
+    }
+
+    return prior_values, prior_map
 
 def walk_forward_auc(dataset: pd.DataFrame, params: dict, min_train_years: int = 2) -> dict:
     """Walk-forward real baseado em anos."""

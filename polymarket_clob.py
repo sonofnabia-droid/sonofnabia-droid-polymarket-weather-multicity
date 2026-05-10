@@ -143,7 +143,7 @@ class ClobClient:
 
     def __init__(self, private_key: str, mode: TradingMode = TradingMode.PAPER,
                  max_daily_loss: float = 50.0, log_dir: Path = Path("live_bot_logs")):
-        if not private_key:
+        if not private_key and mode == TradingMode.REAL:
             raise ValueError("POLY_PRIVATE_KEY não definida.")
         self.mode = mode
         self.max_daily_loss = max_daily_loss
@@ -153,7 +153,7 @@ class ClobClient:
         self._daily_date = None
         self._order_log = []
         self.positions = PositionManager(mode, log_dir)
-        self._client = self._init_clob_client(private_key)
+        self._client = self._init_clob_client(private_key) if private_key else None
 
     def _init_clob_client(self, private_key: str):
         """Inicializa py_clob_client_v2 e obtém credenciais."""
@@ -219,7 +219,7 @@ class ClobClient:
     # ── Order Book ─────────────────────────────────────
 
     def get_orderbook(self, token_id: str) -> OrderBook | None:
-        if not token_id:
+        if not token_id or self._client is None:
             return None
         try:
             book_raw = self._client.get_order_book(token_id)
@@ -323,7 +323,8 @@ class ClobClient:
 
     def buy_yes(self, token_id: str, price: float, size_usdc: float,
                 bracket_label: str = "", market_slug: str = "",
-                order_type: str = "FOK", dry_run: bool = False) -> OrderResult:
+                order_type: str = "FOK", dry_run: bool = False,
+                temp_lo: float | None = None, temp_hi: float | None = None) -> OrderResult:
         from datetime import datetime as _dt
         self._reset_daily_if_needed()
         ts = _dt.now().isoformat()
@@ -356,6 +357,8 @@ class ClobClient:
                 shares=shares, size_usdc=round(size_usdc, 2),
                 mode="paper", order_id=result.order_id,
                 market_slug=market_slug,
+                temp_lo=float(temp_lo) if temp_lo is not None else 0.0,
+                temp_hi=float(temp_hi) if temp_hi is not None else 0.0,
             ))
             return result
 
@@ -417,6 +420,8 @@ class ClobClient:
                 shares=shares, size_usdc=round(size_usdc, 2),
                 mode="real", order_id=result.order_id or "",
                 market_slug=market_slug,
+                temp_lo=float(temp_lo) if temp_lo is not None else 0.0,
+                temp_hi=float(temp_hi) if temp_hi is not None else 0.0,
             ))
         return result
 
@@ -636,6 +641,7 @@ class PositionManager:
         # Prevenir duplicados do mesmo dia
         if any(p.status == PositionStatus.OPEN and p.date_opened == position.date_opened
                and p.token_id == position.token_id
+               and p.market_slug == position.market_slug
                for p in self._positions):
             return
         self._positions.append(position)
@@ -647,7 +653,7 @@ class PositionManager:
         changed = False
         for p in reversed(self._positions):
             if p.status == PositionStatus.OPEN:
-                key = (p.date_opened, p.token_id)
+                key = (p.date_opened, p.token_id, p.market_slug)
                 if key in seen:
                     changed = True
                     continue

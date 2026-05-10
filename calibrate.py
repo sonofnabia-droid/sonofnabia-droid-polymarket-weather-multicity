@@ -185,10 +185,31 @@ def simulate_strategy(signals_df: pd.DataFrame, city: CityConfig,
         peak_s = int(first["peak_slot30_day"])
         p_at_entry = float(first["p_ensemble"])
 
-        # Bracket alvo: escolher o bracket com ask mais alto no mercado simulado
+        # Bracket alvo: comprar o bracket que contém o running_max arredondado
+        # Mantém paridade com backtester.py/live_bot.py.
         if realistic_market and market_sim is not None:
             brackets = market_sim.get_brackets(p_at_entry, entry_rmax, entry_h)
-            best = max(brackets, key=lambda b: b["ask"])
+            target_temp = int(round(entry_rmax))
+
+            best = None
+            for b in brackets:
+                lo, hi = b["temp_lo"], b["temp_hi"]
+                if hi >= 99 and target_temp >= lo:
+                    best = b
+                    break
+                if lo <= -99 and target_temp <= hi:
+                    best = b
+                    break
+                if lo <= target_temp <= hi:
+                    best = b
+                    break
+
+            if best is None:
+                best = min(
+                    brackets,
+                    key=lambda b: abs(((b["temp_lo"] + b["temp_hi"]) / 2) - target_temp)
+                )
+
             bracket_lo = best["temp_lo"]
             bracket_hi = best["temp_hi"]
             ask = best["ask"]
