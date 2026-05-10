@@ -12,8 +12,8 @@ Uso:
     python train_all.py --no-wf                         # rápido (sem walk-forward)
 
 Saída:
-    - {city}_peak_model/lgbm_peak.pkl     # modelo treinado por cidade
-    - {city}_peak_model/peak_model_config.json
+    - cities/{city}/{city}_peak_model/lgbm_peak.pkl
+    - cities/{city}/{city}_peak_model/peak_model_config.json
     - Tabela comparativa final (AUC walk-forward por cidade)
 """
 

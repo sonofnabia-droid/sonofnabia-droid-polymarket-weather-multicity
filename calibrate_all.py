@@ -4,7 +4,7 @@ calibrate_all.py
 Wrapper de calibração multi-cidade.
 
 Itera sobre cidades, calibra cada uma usando run_calibration() do calibrate.py,
-compara com strategy_config_{city}.json existente, e só sobrescreve se a nova
+compara com cities/{city}/strategy_config_{city}.json existente, e só sobrescreve se a nova
 calibração for melhor por uma margem mínima (default 5%).
 
 Uso:
@@ -18,7 +18,7 @@ Uso:
     python calibrate_all.py --margin 0.10             # margem 10% (default 5%)
 
 Saída:
-    - strategy_config_{city}.json: actualizado se calibração nova é melhor
+    - cities/{city}/strategy_config_{city}.json: actualizado se calibração nova é melhor
     - backups/calibrate_all_{timestamp}/: backups dos JSON antigos
     - Tabela comparativa final no terminal
 """
@@ -33,7 +33,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box as rich_box
 
-from cities.config import CITIES
+from cities.config import CITIES, get_city
 from calibrate import parse_windows_arg, print_window_comparison, run_calibration
 
 
@@ -47,8 +47,8 @@ DEFAULT_MIN_IMPROVEMENT = 0.05  # 5%
 # ════════════════════════════════════════════════════════
 
 def load_existing_config(city_name: str) -> dict | None:
-    """Lê strategy_config_{city}.json se existir, senão None."""
-    cfg_path = Path(__file__).parent / f"strategy_config_{city_name}.json"
+    """Lê cities/{city}/strategy_config_{city}.json se existir, senão None."""
+    cfg_path = get_city(city_name).strategy_config_path
     if not cfg_path.exists():
         return None
     try:
@@ -75,8 +75,8 @@ def get_existing_thresholds(cfg: dict | None) -> tuple[float | None, int | None]
 
 
 def backup_config(city_name: str, backup_dir: Path) -> Path | None:
-    """Faz backup do strategy_config_{city}.json se existir."""
-    cfg_path = Path(__file__).parent / f"strategy_config_{city_name}.json"
+    """Faz backup do cities/{city}/strategy_config_{city}.json se existir."""
+    cfg_path = get_city(city_name).strategy_config_path
     if not cfg_path.exists():
         return None
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -87,14 +87,15 @@ def backup_config(city_name: str, backup_dir: Path) -> Path | None:
 
 def write_config(city_name: str, calibration: dict, existing: dict | None) -> Path:
     """
-    Escreve strategy_config_{city}.json com nova calibração.
+    Escreve cities/{city}/strategy_config_{city}.json com nova calibração.
 
-    Preserva chaves não-single do existente (ex: dual config).
+    Preserva chaves adicionais do JSON existente.
     Adiciona/actualiza _meta com info da calibração.
     """
-    cfg_path = Path(__file__).parent / f"strategy_config_{city_name}.json"
+    cfg_path = get_city(city_name).strategy_config_path
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Preservar config existente (especialmente dual)
+    # Preservar config existente.
     new_cfg = dict(existing) if existing else {}
 
     # Garantir bloco single

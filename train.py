@@ -356,7 +356,7 @@ def run_training(city_name: str, no_wf: bool = False, quiet: bool = False) -> di
 
         # Save
         model_dir = Path(city.model_dir)
-        model_dir.mkdir(exist_ok=True)
+        model_dir.mkdir(parents=True, exist_ok=True)
         joblib.dump(lgb, model_dir / "lgbm_peak.pkl")
 
         config = {
@@ -456,7 +456,7 @@ def main():
         )
 
     model_dir = Path(city.model_dir)
-    model_dir.mkdir(exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
 
     joblib.dump(lgb, model_dir / "lgbm_peak.pkl")
 

@@ -4,7 +4,7 @@ modules/single_entry.py
 Single Entry genérico para multi-cidade.
 
 1 compra de $5 com stop-loss por temperatura.
-Lê thresholds de strategy_config_{city}.json.
+Lê thresholds de cities/{city}/strategy_config_{city}.json.
 
 Baseado em POLY-IRIS munich_phased_entry.py::SingleEntry.
 """
@@ -24,8 +24,8 @@ class SingleEntry:
     def __init__(self, city_config: CityConfig, **kwargs):
         self.city = city_config
 
-        # Tentar carregar de strategy_config_{city}.json
-        _cfg_path = Path(__file__).parent.parent / f"strategy_config_{city_config.name}.json"
+        # Tentar carregar config calibrada da pasta da cidade.
+        _cfg_path = city_config.strategy_config_path
         threshold = None
         hour_min = None
         stop_loss_delta = None

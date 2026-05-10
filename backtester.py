@@ -455,7 +455,7 @@ def run_backtest(
             # de ser criado/atualizado por dia — era puro overhead.
             slots_so_far = []
 
-            # SingleEntry usa defaults calibrados (thr/hour_min de strategy_config_{city}.json
+            # SingleEntry usa defaults calibrados (thr/hour_min de cities/{city}/strategy_config_{city}.json
             # ou de city_config como fallback)
             entry_single = SingleEntry(city, parcel_size=bet_size)
 
@@ -695,7 +695,7 @@ def print_dashboard(
     ordertype: str = "fixed",
     bet_value: float = 5.0,
     noise_std: float = 0.08,
-    model_dir: Path = Path("munich_peak_model"),  # caller deve passar city.model_dir
+    model_dir: Path = Path("cities/munich/munich_peak_model"),  # caller deve passar city.model_dir
 ) -> tuple:
     """Dashboard principal. Retorna stats_single."""
 
