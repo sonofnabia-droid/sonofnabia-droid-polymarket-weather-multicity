@@ -113,6 +113,11 @@ def write_config(city_name: str, calibration: dict, existing: dict | None) -> Pa
         "n_trades":         calibration["n_trades"],
         "median_lag_h":     calibration.get("median_lag_h", 0),
         "data_period":      calibration["data_period"],
+        "selection_period":  calibration.get("selection_period"),
+        "validation_period": calibration.get("validation_period"),
+        "validation_years":  calibration.get("validation_years", []),
+        "selection":         calibration.get("selection"),
+        "validation":        calibration.get("validation"),
         "n_days":           calibration["n_days"],
         "metric":           calibration["metric"],
         "mode":             calibration["mode"],
@@ -176,12 +181,13 @@ def print_summary_table(rows: list[dict], dry_run: bool = False) -> None:
     table.add_column("New score",  justify="right")
     table.add_column("Δ",          justify="right")
     table.add_column("Win%",       justify="right")
+    table.add_column("Val Win%",   justify="right")
     table.add_column("Trades/yr",  justify="right")
     table.add_column("Action",     justify="center")
 
     for row in rows:
         if row.get("error"):
-            table.add_row(row["city"], "—", "—", "—", "—", "—", "—", "—", "—", "—",
+            table.add_row(row["city"], "—", "—", "—", "—", "—", "—", "—", "—", "—", "—",
                           f"[red]ERROR[/red]")
             continue
 
@@ -220,6 +226,7 @@ def print_summary_table(rows: list[dict], dry_run: bool = False) -> None:
             f"{new_score:.3f}",
             delta_str,
             f"{cal['win_pct']:.1f}%",
+            f"{cal['validation']['win_pct']:.1f}%" if cal.get("validation") else "—",
             f"{cal['trades_per_year']:.0f}",
             action_str,
         )
@@ -329,9 +336,14 @@ def main():
             "reason":         reason,
         })
 
+        val_win_str = (
+            f"val_win={cal['validation']['win_pct']:.1f}%, "
+            if cal.get("validation") else ""
+        )
         _console.print(f"  Result: thr={cal['threshold']:.3f}, hmin={cal['hour_min']}, "
                        f"score={cal['outcome_score']:.3f}, "
                        f"win={cal['win_pct']:.1f}%, "
+                       f"{val_win_str}"
                        f"trades/yr={cal['trades_per_year']:.0f}")
         _console.print(f"  Action: [bold]{action}[/bold] — {reason}")
 

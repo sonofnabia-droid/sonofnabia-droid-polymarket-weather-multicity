@@ -297,6 +297,35 @@ def run_grid_search(signals_df: pd.DataFrame, city: CityConfig,
     return results
 
 
+def _select_best_result(results: list[dict], metric: str) -> dict | None:
+    viable = [r for r in results if r["trades"] >= 30]
+    if not viable:
+        viable = results
+    if not viable:
+        return None
+    sort_key = "outcome_score" if metric == "outcome" else "roi_pct"
+    return max(viable, key=lambda r: r.get(sort_key, 0))
+
+
+def _validation_years(signals_df: pd.DataFrame, n_years: int = 1) -> list[int]:
+    years = sorted(pd.to_datetime(signals_df["date"]).dt.year.unique())
+    if len(years) <= n_years:
+        return []
+    return [int(y) for y in years[-n_years:]]
+
+
+def _result_summary(result: dict, n_days: int) -> dict:
+    return {
+        "outcome_score":   round(result.get("outcome_score", 0), 4),
+        "roi_pct":         round(result.get("roi_pct", 0), 2),
+        "win_pct":         round(result.get("win_pct", 0), 2),
+        "n_trades":        int(result.get("trades", 0)),
+        "trades_per_year": round(result.get("trades", 0) / n_days * 365, 1) if n_days else 0,
+        "median_lag_h":    round(result.get("median_lag_h", 0), 2),
+        "n_days":          int(n_days),
+    }
+
+
 # ══════════════════════════════════════════════════════
 #  TABELAS E ANÁLISES
 # ══════════════════════════════════════════════════════
@@ -636,6 +665,101 @@ def get_grid(mode: str):
     return thresholds, hour_mins
 
 
+def parse_windows_arg(value: str) -> list[int]:
+    windows = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            years = int(part)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"Janela inválida: {part}") from exc
+        if years < 2:
+            raise argparse.ArgumentTypeError("Cada janela precisa de pelo menos 2 anos")
+        windows.append(years)
+    if not windows:
+        raise argparse.ArgumentTypeError("Lista de janelas vazia")
+    return sorted(set(windows))
+
+
+def print_window_comparison(rows: list[dict], metric: str) -> None:
+    table = Table(
+        box=rich_box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+        title="Comparação de janelas — seleção vs validação",
+    )
+    for col in [
+        "Years", "Thr", "HMin", "Sel Win%", "Sel Trd/y", "Sel Score",
+        "Val Years", "Val Win%", "Val Trd/y", "Val Score", "Δ Win",
+    ]:
+        table.add_column(col, justify="right")
+
+    for row in rows:
+        if row is None:
+            continue
+        sel = row.get("selection") or {}
+        val = row.get("validation") or {}
+        val_years = ",".join(str(y) for y in row.get("validation_years", [])) or "-"
+        sel_win = sel.get("win_pct", row.get("win_pct", 0.0))
+        val_win = val.get("win_pct") if val else None
+        delta_win = (val_win - sel_win) if val_win is not None else None
+
+        delta_style = "green"
+        if delta_win is not None and delta_win < -10:
+            delta_style = "red"
+        elif delta_win is not None and delta_win < -5:
+            delta_style = "yellow"
+
+        table.add_row(
+            str(row["years"]),
+            f"{row['threshold']:.3f}",
+            f"{row['hour_min']}h",
+            f"{sel_win:.1f}%",
+            f"{sel.get('trades_per_year', row.get('trades_per_year', 0.0)):.0f}",
+            f"{sel.get('outcome_score', row.get('outcome_score', 0.0)):.1f}",
+            val_years,
+            f"{val_win:.1f}%" if val_win is not None else "-",
+            f"{val.get('trades_per_year', 0.0):.0f}" if val else "-",
+            f"{val.get('outcome_score', 0.0):.1f}" if val else "-",
+            f"[{delta_style}]{delta_win:+.1f}pp[/{delta_style}]" if delta_win is not None else "-",
+        )
+
+    _console.print(table)
+    if metric == "roi":
+        _console.print("[dim]Nota: a tabela compara outcome_score/win-rate mesmo em metric=roi; "
+                       "ROI continua disponível no JSON retornado por run_calibration().[/dim]")
+
+
+def run_window_sweep(
+    city_name: str,
+    windows: list[int],
+    mode: str,
+    metric: str,
+    realistic: bool,
+) -> list[dict]:
+    rows = []
+    for years in windows:
+        _console.rule(f"[bold cyan]{city_name} — janela {years} anos[/bold cyan]")
+        cal = run_calibration(
+            city_name=city_name,
+            years=years,
+            mode=mode,
+            metric=metric,
+            realistic=realistic,
+            quiet=False,
+            validate=True,
+            validation_years=1,
+        )
+        if cal is None:
+            _console.print(f"[red]Sem resultado para janela {years} anos[/red]")
+            continue
+        rows.append(cal)
+    print_window_comparison(rows, metric)
+    return rows
+
+
 # ══════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════
@@ -646,6 +770,8 @@ def run_calibration(
     metric: str = "outcome",
     realistic: bool = False,
     quiet: bool = False,
+    validate: bool = True,
+    validation_years: int = 1,
 ) -> dict | None:
     """
     Corre calibração para 1 cidade e devolve dict com melhor configuração.
@@ -660,6 +786,9 @@ def run_calibration(
         metric: outcome | roi
         realistic: usar SimulatedMarket com ruído
         quiet: se True, silencia prints intermédios
+        validate: se True, escolhe params sem o(s) ano(s) mais recente(s)
+                  e reporta validação separada
+        validation_years: número de anos finais reservados para validação
 
     Returns:
         dict com:
@@ -696,35 +825,75 @@ def run_calibration(
             _console.print(f"  [{city_name}] Grid: {len(thresholds)}×{len(hour_mins)} = "
                            f"{len(thresholds)*len(hour_mins)} combos")
 
+        val_years = _validation_years(signals_df, validation_years) if validate else []
+        if val_years:
+            years_series = pd.to_datetime(signals_df["date"]).dt.year
+            selection_signals = signals_df[~years_series.isin(val_years)].copy()
+            validation_signals = signals_df[years_series.isin(val_years)].copy()
+            if not quiet:
+                _console.print(f"  [{city_name}] Selection years: "
+                               f"{sorted(pd.to_datetime(selection_signals['date']).dt.year.unique())}")
+                _console.print(f"  [{city_name}] Validation years: {val_years}")
+        else:
+            selection_signals = signals_df
+            validation_signals = pd.DataFrame()
+
         results = run_grid_search(
-            signals_df, city, thresholds, hour_mins,
+            selection_signals, city, thresholds, hour_mins,
             realistic_market=realistic,
         )
 
         if not results:
             return None
 
-        # Filtrar viáveis (>= 30 trades)
-        viable = [r for r in results if r["trades"] >= 30]
-        if not viable:
-            viable = results  # se nenhum viável, usar todos
-
-        sort_key = "outcome_score" if metric == "outcome" else "roi_pct"
-        best = max(viable, key=lambda r: r.get(sort_key, 0))
+        best = _select_best_result(results, metric)
+        if best is None:
+            return None
 
         n_days = signals_df["date"].nunique() if "date" in signals_df.columns else 1
+        selection_days = selection_signals["date"].nunique() if "date" in selection_signals.columns else 1
+        selection_summary = _result_summary(best, selection_days)
+
+        validation_result = None
+        validation_summary = None
+        if not validation_signals.empty:
+            market_sim = (
+                SimulatedMarket(temp_range=city.temp_range, noise_std=0.05, seed=42)
+                if realistic else None
+            )
+            validation_result = simulate_strategy(
+                validation_signals,
+                city,
+                threshold=best["threshold"],
+                hour_min=int(best["hour_min"]),
+                realistic_market=realistic,
+                market_sim=market_sim,
+            )
+            validation_days = validation_signals["date"].nunique()
+            validation_summary = _result_summary(validation_result, validation_days)
 
         return {
             "city":             city_name,
             "threshold":        round(best["threshold"], 4),
             "hour_min":         int(best["hour_min"]),
-            "outcome_score":    round(best.get("outcome_score", 0), 4),
-            "roi_pct":          round(best.get("roi_pct", 0), 2),
-            "win_pct":          round(best.get("win_pct", 0), 2),
-            "n_trades":         int(best["trades"]),
-            "trades_per_year":  round(best["trades"] / n_days * 365, 1) if n_days else 0,
-            "median_lag_h":     round(best.get("median_lag_h", 0), 2),
+            "outcome_score":    selection_summary["outcome_score"],
+            "roi_pct":          selection_summary["roi_pct"],
+            "win_pct":          selection_summary["win_pct"],
+            "n_trades":         selection_summary["n_trades"],
+            "trades_per_year":  selection_summary["trades_per_year"],
+            "median_lag_h":     selection_summary["median_lag_h"],
             "data_period":      [str(start_date), str(end_date)],
+            "selection_period":  [
+                str(selection_signals["date"].min()) if not selection_signals.empty else None,
+                str(selection_signals["date"].max()) if not selection_signals.empty else None,
+            ],
+            "validation_period": [
+                str(validation_signals["date"].min()) if not validation_signals.empty else None,
+                str(validation_signals["date"].max()) if not validation_signals.empty else None,
+            ],
+            "validation_years":  val_years,
+            "selection":        selection_summary,
+            "validation":       validation_summary,
             "n_days":           int(n_days),
             "metric":           metric,
             "mode":             mode,
@@ -743,8 +912,10 @@ def main():
     parser = argparse.ArgumentParser(description="Calibração genérica multi-cidade")
     parser.add_argument("--city", type=str, default="munich", choices=list(CITIES.keys()),
                         help="Cidade para calibrar")
-    parser.add_argument("--years", type=int, default=3,
-                        help="Quantos anos de histórico (default 3)")
+    parser.add_argument("--years", type=int, default=5,
+                        help="Quantos anos de histórico (default 5)")
+    parser.add_argument("--windows", type=parse_windows_arg, default=None,
+                        help="Compara várias janelas, ex: --windows 3,5,7,10")
     parser.add_argument("--mode", choices=["fast", "standard", "detailed", "full"],
                         default="standard",
                         help="Densidade: fast=21, standard=69, detailed=161, full=560")
@@ -761,6 +932,17 @@ def main():
         _console.print("[yellow]Nota: --realistic é ignorado em modo --metric outcome "
                        "(não precisamos de preços simulados para optimizar win-rate).[/yellow]")
         args.realistic = False
+
+    if args.windows:
+        _console.print("\n[bold cyan]" + args.city.title() + " Calibration — comparação de janelas[/bold cyan]\n")
+        run_window_sweep(
+            city_name=args.city,
+            windows=args.windows,
+            mode=args.mode,
+            metric=args.metric,
+            realistic=args.realistic,
+        )
+        return
 
     city = get_city(args.city)
     set_city(args.city)
