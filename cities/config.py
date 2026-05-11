@@ -4,11 +4,17 @@ cities/config.py
 Configuração de cidades para sistema multi-cidade.
 
 Contém CityConfig dataclass e CITIES dict com configuração das cidades.
+
+Última calibração: 2026-05-11 (mode=full, 7 anos de dados)
+threshold e hour_min reflectem os valores dos strategy_config_{city}.json.
+Em runtime o live_bot lê os JSONs directamente via city.strategy_config_path.
+Os valores aqui servem como documentação e fallback de emergência.
 """
 
+import json
 from dataclasses import dataclass, field
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass
@@ -32,25 +38,25 @@ class StrategyConfig:
 class CityConfig:
     """Configuração completa de uma cidade."""
     name: str
-    icao: str                          # Código ICAO do aeroporto
-    timezone: str                      # Timezone (ex: Europe/Berlin)
-    latitude: float                    # Latitude Open-Meteo
-    longitude: float                   # Longitude Open-Meteo
-    polymarket_slug_pfx: str           # Prefixo do slug Polymarket
-    wu_history_path: Optional[str]     # Caminho WU (se aplicável)
-    csv_path: str                      # Caminho do CSV histórico
-    model_dir: str                     # Diretório do modelo treinado
-    unit: str                          # Unidade de temperatura (celsius)
-    temp_range: range                  # Range válido de temperaturas
-    max_daily_loss: float              # Máxima perda diária ($)
-    max_per_trade: float               # Máximo por trade ($)
-    extra_features: list[str]          # Features específicas da cidade
-    threshold: Optional[float]         # Threshold de decisão (calibrado)
-    hour_min: Optional[int]            # Hora mínima para entrada (calibrado)
-    day_start: int = 6                 # Hora início do dia
-    day_end: int = 21                  # Hora fim do dia
-    bot_timezone: str = "Europe/Lisbon"  # Timezone do bot (onde corre)
-    climatology: dict[int, float] | None = None  # Climatologia mensal (media max mensal)
+    icao: str                            # Código ICAO do aeroporto
+    timezone: str                        # Timezone (ex: Europe/Berlin)
+    latitude: float                      # Latitude Open-Meteo
+    longitude: float                     # Longitude Open-Meteo
+    polymarket_slug_pfx: str             # Prefixo do slug Polymarket
+    wu_history_path: Optional[str]       # Caminho WU (se aplicável)
+    csv_path: str                        # Caminho do CSV histórico
+    model_dir: str                       # Diretório do modelo treinado
+    unit: str                            # Unidade de temperatura (celsius)
+    temp_range: range                    # Range válido de temperaturas
+    max_daily_loss: float                # Máxima perda diária ($)
+    max_per_trade: float                 # Máximo por trade ($)
+    extra_features: list[str]            # Features específicas da cidade
+    threshold: Optional[float]           # Threshold (fallback — runtime usa JSON)
+    hour_min: Optional[int]              # Hora mínima (fallback — runtime usa JSON)
+    day_start: int = 6                   # Hora início do dia (hora local)
+    day_end: int = 21                    # Hora fim do dia (hora local)
+    bot_timezone: str = "Europe/Lisbon"  # Timezone do bot (CASSIOPEIA = Lisboa)
+    climatology: dict[int, float] | None = None  # Média mensal da máxima diária
 
     def __post_init__(self) -> None:
         model_path = Path(self.model_dir)
@@ -66,8 +72,18 @@ class CityConfig:
         return self.city_dir / f"strategy_config_{self.name}.json"
 
 
-# Configurações por cidade
+# ══════════════════════════════════════════════════════════════════════════════
+#  CITIES
+#  Valores de threshold e hour_min: calibração 2026-05-11, mode=full, 7 anos.
+#  Score/win/trades referem-se ao período de selection do calibrate_all.
+# ══════════════════════════════════════════════════════════════════════════════
+
 CITIES = {
+
+    # ─────────────────────────────────────────────────────────────
+    #  CIDADES ORIGINAIS
+    # ─────────────────────────────────────────────────────────────
+
     "munich": CityConfig(
         name="munich",
         icao="EDDM",
@@ -83,14 +99,15 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.55,
-        hour_min=15,
+        threshold=0.350,  # win=97.68% score=204.2 trades/y=122 val_win=100.0%
+        hour_min=8,
         bot_timezone="Europe/Lisbon",
         climatology={
-            1: 3.0, 2: 5.0, 3: 10.0, 4: 15.0, 5: 20.0, 6: 23.0,
+            1: 3.0,  2: 5.0,  3: 10.0, 4: 15.0, 5: 20.0, 6: 23.0,
             7: 25.0, 8: 25.0, 9: 20.0, 10: 14.0, 11: 7.0, 12: 4.0
         },
     ),
+
     "dallas": CityConfig(
         name="dallas",
         icao="KDFW",
@@ -98,7 +115,7 @@ CITIES = {
         latitude=32.90,
         longitude=-97.04,
         polymarket_slug_pfx="highest-temperature-in-dallas-on",
-        wu_history_path=None,  # Não tem WU, usar Open-Meteo
+        wu_history_path=None,
         csv_path="historic/dallas.csv",
         model_dir="cities/dallas/dallas_peak_model",
         unit="celsius",
@@ -106,14 +123,15 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # Calibrado: 232 trades/ano, win=96.2%, ROI=+79.5%
-        hour_min=17,      # Calibrado
-        bot_timezone="America/Chicago",
+        threshold=0.350,  # win=96.23% score=227.9 trades/y=232
+        hour_min=10,
+        bot_timezone="Europe/Lisbon",
         climatology={
             1: 13.0, 2: 16.0, 3: 21.0, 4: 26.0, 5: 30.0, 6: 34.0,
             7: 36.0, 8: 36.0, 9: 32.0, 10: 26.0, 11: 19.0, 12: 14.0
         },
     ),
+
     "ankara": CityConfig(
         name="ankara",
         icao="LTAC",
@@ -121,7 +139,7 @@ CITIES = {
         latitude=40.125,
         longitude=32.993,
         polymarket_slug_pfx="highest-temperature-in-ankara-on",
-        wu_history_path=None,  # Não tem WU, usar Open-Meteo
+        wu_history_path=None,
         csv_path="historic/ankara.csv",
         model_dir="cities/ankara/ankara_peak_model",
         unit="celsius",
@@ -129,11 +147,11 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # Calibrado: 281 trades/ano, win=89.9%, ROI=+106.8%
-        hour_min=15,      # Calibrado
-        bot_timezone="Europe/Istanbul",
+        threshold=0.425,  # win=94.83% score=224.5 trades/y=232
+        hour_min=10,
+        bot_timezone="Europe/Lisbon",
         climatology={
-            1: 4.0, 2: 6.0, 3: 11.0, 4: 16.0, 5: 21.0, 6: 25.0,
+            1: 4.0,  2: 6.0,  3: 11.0, 4: 16.0, 5: 21.0, 6: 25.0,
             7: 29.0, 8: 29.0, 9: 24.0, 10: 18.0, 11: 11.0, 12: 6.0
         },
     ),
@@ -150,16 +168,16 @@ CITIES = {
         latitude=1.3502,
         longitude=103.9940,
         polymarket_slug_pfx="highest-temperature-in-singapore-on",
-        wu_history_path="sg/singapore/WSSS",  # Polymarket usa WU
+        wu_history_path="sg/singapore/WSSS",
         csv_path="historic/singapore.csv",
         model_dir="cities/singapore/singapore_peak_model",
         unit="celsius",
-        temp_range=range(20, 37),  # Equatorial — variação muito pequena
+        temp_range=range(20, 37),
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,    # A calibrar
-        hour_min=None,     # A calibrar
+        threshold=0.350,  # win=96.35% score=222.2 trades/y=201
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 31.0, 2: 32.0, 3: 32.0, 4: 32.0, 5: 32.0, 6: 32.0,
@@ -174,7 +192,7 @@ CITIES = {
         latitude=-6.1256,
         longitude=106.6560,
         polymarket_slug_pfx="highest-temperature-in-jakarta-on",
-        wu_history_path=None,  # A confirmar fonte Polymarket
+        wu_history_path=None,
         csv_path="historic/jakarta.csv",
         model_dir="cities/jakarta/jakarta_peak_model",
         unit="celsius",
@@ -182,8 +200,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.400,  # win=95.20% score=215.1 trades/y=181
+        hour_min=12,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 30.0, 2: 30.0, 3: 31.0, 4: 32.0, 5: 32.0, 6: 32.0,
@@ -206,8 +224,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=97.85% score=214.6 trades/y=155 val_win=96.83%
+        hour_min=8,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 32.0, 2: 33.0, 3: 33.0, 4: 33.0, 5: 33.0, 6: 33.0,
@@ -226,12 +244,12 @@ CITIES = {
         csv_path="historic/lagos.csv",
         model_dir="cities/lagos/lagos_peak_model",
         unit="celsius",
-        temp_range=range(18, 38),  # Tropical húmido — Mar/Abr são os mais quentes
+        temp_range=range(18, 38),
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.375,  # win=96.25% score=227.8 trades/y=232
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 32.0, 2: 33.0, 3: 33.0, 4: 32.0, 5: 31.0, 6: 29.0,
@@ -251,16 +269,16 @@ CITIES = {
         latitude=25.0694,
         longitude=121.5517,
         polymarket_slug_pfx="highest-temperature-in-taipei-on",
-        wu_history_path="tw/taipei/RCSS",  # Polymarket usa WU/RCSS (Songshan)
+        wu_history_path="tw/taipei/RCSS",
         csv_path="historic/taipei.csv",
         model_dir="cities/taipei/taipei_peak_model",
         unit="celsius",
-        temp_range=range(5, 40),  # Subtropical — bom range
+        temp_range=range(5, 40),
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=87.59% score=175.6 trades/y=100 ⚠ win baixo
+        hour_min=12,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 19.0, 2: 20.0, 3: 23.0, 4: 26.0, 5: 30.0, 6: 32.0,
@@ -275,7 +293,7 @@ CITIES = {
         latitude=25.7954,
         longitude=-80.2901,
         polymarket_slug_pfx="highest-temperature-in-miami-on",
-        wu_history_path=None,  # A confirmar (provavelmente NOAA/KMIA)
+        wu_history_path=None,
         csv_path="historic/miami.csv",
         model_dir="cities/miami/miami_peak_model",
         unit="celsius",
@@ -283,8 +301,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.525,  # win=97.07% score=227.5 trades/y=220
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 25.0, 2: 26.0, 3: 28.0, 4: 29.0, 5: 31.0, 6: 32.0,
@@ -303,12 +321,12 @@ CITIES = {
         csv_path="historic/karachi.csv",
         model_dir="cities/karachi/karachi_peak_model",
         unit="celsius",
-        temp_range=range(5, 48),  # Subtropical árido — pode chegar aos 45°C+
+        temp_range=range(5, 48),
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.400,  # win=97.06% score=232.9 trades/y=250
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 25.0, 2: 27.0, 3: 32.0, 4: 35.0, 5: 36.0, 6: 35.0,
@@ -336,8 +354,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=80.59% score=177.0 trades/y=156 ⚠ não lançar
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: -4.0, 2: -3.0, 3: 4.0,  4: 12.0, 5: 20.0, 6: 23.0,
@@ -360,8 +378,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.375,  # win=82.57% score=188.4 trades/y=190 ⚠ não lançar
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 1.0,  2: 3.0,  3: 8.0,  4: 14.0, 5: 20.0, 6: 23.0,
@@ -384,8 +402,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=98.64% score=231.2 trades/y=220 val_win=98.67%
+        hour_min=15,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 1.0,  2: 5.0,  3: 12.0, 4: 20.0, 5: 26.0, 6: 31.0,
@@ -408,8 +426,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=94.31% score=210.6 trades/y=170 val_win=86.54% ⚠ overfitting
+        hour_min=8,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: -1.0, 2: 1.0,  3: 7.0,  4: 14.0, 5: 20.0, 6: 26.0,
@@ -436,8 +454,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=97.69% score=224.0 trades/y=195 val_win=94.12%
+        hour_min=8,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 10.0, 2: 12.0, 3: 16.0, 4: 18.0, 5: 23.0, 6: 28.0,
@@ -460,8 +478,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=93.98% score=210.4 trades/y=172
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 17.0, 2: 18.0, 3: 20.0, 4: 24.0, 5: 27.0, 6: 30.0,
@@ -489,8 +507,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=98.55% score=244.1 trades/y=299 val_win=99.07% ⭐ melhor
+        hour_min=8,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 19.0, 2: 22.0, 3: 26.0, 4: 31.0, 5: 36.0, 6: 41.0,
@@ -513,8 +531,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.725,  # win=95.09% score=231.7 trades/y=272
+        hour_min=14,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 13.0, 2: 17.0, 3: 22.0, 4: 27.0, 5: 33.0, 6: 39.0,
@@ -542,8 +560,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=None,
-        hour_min=None,
+        threshold=0.350,  # win=98.04% score=236.1 trades/y=255 val_win=96.55%
+        hour_min=8,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 30.0, 2: 29.0, 3: 26.0, 4: 22.0, 5: 18.0, 6: 15.0,
@@ -551,6 +569,34 @@ CITIES = {
         },
     ),
 }
+
+
+def apply_strategy_configs() -> None:
+    """
+    Aplica threshold/hour_min dos strategy_config_{city}.json em memória.
+
+    O ficheiro cities/config.py mantém defaults e documentação. Em runtime,
+    os JSONs calibrados são a fonte mais recente para a estratégia.
+    """
+    for city in CITIES.values():
+        cfg_path = city.strategy_config_path
+        if not cfg_path.exists():
+            continue
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except Exception:
+            continue
+
+        single = cfg.get("single", {})
+        threshold = single.get("threshold")
+        hour_min = single.get("hour_min")
+        if threshold is not None:
+            city.threshold = float(threshold)
+        if hour_min is not None:
+            city.hour_min = int(hour_min)
+
+
+apply_strategy_configs()
 
 
 def get_city(name: str) -> CityConfig:
