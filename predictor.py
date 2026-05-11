@@ -29,41 +29,33 @@ LOG_DIR.mkdir(exist_ok=True)
 # CITY CONTEXT
 # ══════════════════════════════════════════════════════
 
-_city_config: CityConfig | None = None
-_city_zoneinfo: ZoneInfo | None = None
-_bot_zoneinfo: ZoneInfo = ZoneInfo("Europe/Lisbon")
 _last_save_times: dict[str, float] = {}
 
 
 def set_city(name: str) -> CityConfig:
-    global _city_config, _city_zoneinfo, _bot_zoneinfo  # ← adicionar _bot_zoneinfo
-    _city_config = get_city(name)
-    _city_zoneinfo = ZoneInfo(_city_config.timezone)
-    _bot_zoneinfo = ZoneInfo(_city_config.bot_timezone)
-    return _city_config
+    return get_city(name)
 
 
 def _get_city() -> CityConfig:
     """Retorna a cidade atual ou define Munich como padrão."""
-    global _city_config
-    if _city_config is None:
-        return set_city("munich")
-    return _city_config
+    return get_city("munich")
 
 
-def _city_now() -> datetime:
+def _city_now(city_name: str | None = None) -> datetime:
     """Datetime atual na timezone da cidade."""
-    return datetime.now(tz=_city_zoneinfo or ZoneInfo("Europe/Berlin"))
+    cfg = get_city(city_name) if city_name else _get_city()
+    return datetime.now(tz=ZoneInfo(cfg.timezone))
 
 
-def _city_date() -> date:
+def _city_date(city_name: str | None = None) -> date:
     """Data atual segundo o relógio da cidade."""
-    return _city_now().date()
+    return _city_now(city_name).date()
 
 
-def _bot_now() -> datetime:
+def _bot_now(city_name: str | None = None) -> datetime:
     """Datetime atual na timezone do bot."""
-    return datetime.now(tz=_bot_zoneinfo)
+    cfg = get_city(city_name) if city_name else _get_city()
+    return datetime.now(tz=ZoneInfo(cfg.bot_timezone))
 
 
 # ══════════════════════════════════════════════════════
@@ -386,8 +378,7 @@ def init_history_max(city_name: str | None = None) -> dict:
     if city_name:
         path = LOG_DIR / f"{city_name}_history_max.json"
     else:
-        cfg = _get_city()
-        path = LOG_DIR / f"{cfg.name}_history_max.json"
+        path = LOG_DIR / "munich_history_max.json"
     if path.exists():
         try:
             return {
@@ -403,8 +394,7 @@ def _save_history_max_file(history_max: dict, city_name: str | None = None) -> N
     if city_name:
         path = LOG_DIR / f"{city_name}_history_max.json"
     else:
-        cfg = _get_city()
-        path = LOG_DIR / f"{cfg.name}_history_max.json"
+        path = LOG_DIR / "munich_history_max.json"
     LOG_DIR.mkdir(exist_ok=True)
     data = {d.isoformat(): v for d, v in history_max.items()}
     path.write_text(json.dumps(data, indent=2))
@@ -427,8 +417,7 @@ def update_history_max(history: dict, slots_so_far: list[dict], city_name: str |
     if "date" in first_slot:
         today = first_slot["date"]
     elif city_name:
-        cfg = get_city(city_name)
-        today = _city_now().astimezone(ZoneInfo(cfg.timezone)).date()
+        today = _city_date(city_name)
     else:
         today = _city_date()
 
@@ -445,7 +434,7 @@ def update_history_max(history: dict, slots_so_far: list[dict], city_name: str |
     # Só guardar em disco a cada 5 minutos ou se a máxima subiu
     import time
     now = time.time()
-    key = city_name or _get_city().name
+    key = city_name or "munich"
     last = _last_save_times.get(key, 0.0)
     if now - last >= 300 or old_max is None or cur_max > old_max:
         _save_history_max_file(history, city_name)
