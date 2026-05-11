@@ -152,24 +152,27 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
 
         slots_so_far: list[dict] = []
 
-        for i, row in day_df.iterrows():
-            h = int(row["hour"])
-            slot30 = int(row.get("slot30", 0))
-            temp = float(row["temp_c"])
+        for row in day_df.itertuples(index=True):
+            i = row.Index
+            h = int(row.hour)
+            if h < city.day_start or h > city.day_end:
+                continue
+            slot30 = int(getattr(row, "slot30", 0))
+            temp = float(row.temp_c)
             label = 1 if (i == peak_idx) else 0
 
             prev7 = compute_prev7(history_max, d, city.name)
 
             slot_entry = {
                 "hour": h, "slot30": slot30, "temp_c": temp,
-                "humidity": float(row["humidity"]),
-                "cloud_cover": float(row["cloud_cover"]),
-                "dewpoint_c": float(row["dewpoint_c"]),
-                "pressure_hpa": float(row["pressure_hpa"]),
-                "wind_dir_deg": float(row["wind_dir_deg"]),
-                "wind_speed_kmh": float(row["wind_speed_kmh"]),
-                "wind_gust_kmh": float(row["wind_gust_kmh"]),
-                "uv_index": float(row["uv_index"]),
+                "humidity": float(row.humidity),
+                "cloud_cover": float(row.cloud_cover),
+                "dewpoint_c": float(row.dewpoint_c),
+                "pressure_hpa": float(row.pressure_hpa),
+                "wind_dir_deg": float(row.wind_dir_deg),
+                "wind_speed_kmh": float(row.wind_speed_kmh),
+                "wind_gust_kmh": float(row.wind_gust_kmh),
+                "uv_index": float(row.uv_index),
             }
             slots_so_far.append(slot_entry)
 
@@ -181,16 +184,16 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
             feat_row = build_features(
                 slots_so_far=slots_so_far,
                 current=current_extra,
-                month=int(row.get("month", getattr(d, "month", 6))),
-                doy=int(row.get("doy", 180)),
+                month=int(getattr(row, "month", getattr(d, "month", 6))),
+                doy=int(getattr(row, "doy", 180)),
             )
 
             feat_row["date"] = d
             feat_row["hour"] = h
             feat_row["slot30"] = slot30
             feat_row["label"] = label
-            feat_row["month"] = int(row.get("month", getattr(d, "month", 6)))
-            feat_row["doy"] = int(row.get("doy", 180))
+            feat_row["month"] = int(getattr(row, "month", getattr(d, "month", 6)))
+            feat_row["doy"] = int(getattr(row, "doy", 180))
 
             rows.append(feat_row)
 
@@ -233,8 +236,9 @@ def _compute_expanding_prior(dataset: pd.DataFrame) -> tuple[pd.Series, dict]:
     for year in years:
         year_data = sorted_dataset[sorted_dataset["date"].dt.year == year]
 
-        for idx, row in year_data.iterrows():
-            key = (int(row["month"]), int(row["hour"]), int(row["slot30"]))
+        for row in year_data.itertuples(index=True):
+            idx = row.Index
+            key = (int(row.month), int(row.hour), int(row.slot30))
             acc = prior_accumulator.get(key)
             if acc and acc["count"] > 0:
                 prior_values.at[idx] = acc["sum"] / acc["count"]

@@ -171,7 +171,8 @@ def decide_action(new_cal: dict, old_cfg: dict | None,
 def _window_choice_score(calibration: dict, metric: str) -> float:
     key = "outcome_score" if metric == "outcome" else "roi_pct"
     score_block = calibration.get("validation") or calibration.get("selection") or calibration
-    return float(score_block.get(key, 0.0) or 0.0)
+    val = score_block.get(key, 0.0)
+    return float(val) if val is not None else 0.0
 
 
 def run_window_calibration(

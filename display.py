@@ -154,7 +154,16 @@ def extract_display_data(state, daily_stats=None, bankroll: float = 500.0) -> "C
     if daily_stats:
         daily_pnl  = getattr(daily_stats, "daily_pnl", 0.0)
         n_trades   = len(getattr(daily_stats, "trades", []))
-        daily_loss = getattr(daily_stats, "total_invested", 0.0)
+        trades_list = getattr(daily_stats, "trades", [])
+        if trades_list:
+            daily_loss = sum(
+                float(t.get("realized_pnl", 0.0))
+                for t in trades_list
+                if float(t.get("realized_pnl", 0.0)) < 0
+            )
+            daily_loss = abs(daily_loss)
+        if daily_loss == 0 and daily_pnl < 0:
+            daily_loss = abs(daily_pnl)
 
     positions_all = []
     if _HAS_CLOB and state.clob and hasattr(state.clob, "positions"):

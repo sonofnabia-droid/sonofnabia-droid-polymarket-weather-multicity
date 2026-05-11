@@ -62,8 +62,10 @@ def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
     """Converte (hour, minute) para slot 30min (truncar para CIMA)."""
     if minute < 30:
         return (hour, 30)
-    else:
-        return (hour + 1, 0)
+    h = hour + 1
+    if h == 24:
+        return (23, 30)
+    return (h, 0)
 
 
 # ══════════════════════════════════════════════════════
@@ -328,23 +330,28 @@ def load_data(csv_path: Path, city: CityConfig) -> pd.DataFrame:
         (raw["hour"] >= city.day_start) & (raw["hour"] <= city.day_end)
     ].dropna(subset=["temp_c"]).sort_values(
         ["date", "hour", "slot30"]
-    ).reset_index(drop=True)
+    ).drop_duplicates(subset=["date", "hour", "slot30"], keep="last").reset_index(drop=True)
 
     _console.print(f"    [green]✓[/green] {len(df):,} slots  {df['date'].nunique()} dias")
     return df
 
 
-def _compute_prev7_map(df: pd.DataFrame) -> dict:
-    """{date: prev_7d_avg_max} — evita hardcoding a 15.0."""
+def _compute_prev7_map(df: pd.DataFrame, city: CityConfig) -> dict:
+    """{date: prev_7d_avg_max} — usa janela real de 7 dias e climatologia."""
     daily_max = df.groupby("date")["temp_c"].max().sort_index()
     dates_list = list(daily_max.index)
+    climatology = city.climatology if city.climatology else {i: 15.0 for i in range(1, 13)}
     prev7 = {}
-    for i, d in enumerate(dates_list):
-        if i == 0:
-            prev7[d] = 15.0
+    from collections import deque
+    window = deque()
+    for d in dates_list:
+        while window and (d - window[0]).days > 7:
+            window.popleft()
+        if not window:
+            prev7[d] = climatology.get(d.month, 15.0)
         else:
-            window = daily_max[dates_list[max(0, i - 7):i]]
-            prev7[d] = float(window.mean()) if len(window) else 15.0
+            prev7[d] = float(np.mean([daily_max[dd] for dd in window]))
+        window.append(d)
     return prev7
 
 
@@ -374,7 +381,12 @@ def _compute_sharpe_sortino(capital_history: list) -> tuple:
     if not capital_history or len(capital_history) < 2:
         return 0.0, 0.0
     caps = np.array([c for _, c in capital_history], dtype=float)
-    rets = np.diff(caps) / caps[:-1]
+    prev = caps[:-1]
+    curr = caps[1:]
+    valid = prev > 0
+    if not valid.any():
+        return 0.0, 0.0
+    rets = (curr[valid] - prev[valid]) / prev[valid]
     if len(rets) == 0 or rets.std() < 1e-8:
         return 0.0, 0.0
     ann = np.sqrt(252)
@@ -407,12 +419,12 @@ def run_backtest(
     mode: str = "single",
 ) -> tuple:
     """
-    Retorna (yearly_dict, capital_history, day_records).
+    Retorna (yearly_dict, capital_history, day_records, capital_flow_debug).
 
     mode: "single" — determina qual PnL é somado ao capital simulado.
     """
     sim_mkt = SimulatedMarket(temp_range=city.temp_range, noise_std=noise_std)
-    prev7_map = _compute_prev7_map(df)
+    prev7_map = _compute_prev7_map(df, city)
 
     yearly = {}
     capital = 1000.0
@@ -558,7 +570,7 @@ def run_backtest(
 
                 lag_slots = peak_sidx - _slot_idx(rec["hour"], rec["slot30"])
                 single_lag_h = lag_slots * 0.5
-                premature_s = rec["hour"] < peak_h and not single_won
+                premature_s = _slot_idx(rec["hour"], rec["slot30"]) < peak_sidx
             else:
                 premature_s = False
             correct_s = single_won
@@ -589,30 +601,24 @@ def run_backtest(
                 "single_hour": entry_single.record["hour"] if entry_single.bought and entry_single.record else None,
             })
 
-            if ordertype == "percent":
-                # Só somar ao capital o PnL relevante para o modo escolhido.
-                cap_before = capital
-                if mode == "single":
-                    capital += single_pnl
-                else:  # "both"
-                    capital += single_pnl
-                capital_after_pnl = capital  # antes do clip
-                capital = max(capital, 100.0)
+            cap_before = capital
+            capital += single_pnl
+            capital_after_pnl = capital
+            capital = max(capital, 0.0)
 
-                # DEBUG: gravar trade-a-trade para CSV se mode=single
-                if mode == "single" and entry_single.bought:
-                    capital_flow_debug.append({
-                        "date": d,
-                        "cap_before": round(cap_before, 2),
-                        "bet_size": round(bet_size, 2),
-                        "ask": round(entry_single.record["ask"], 4) if entry_single.record else None,
-                        "won": single_won,
-                        "sold_by_stop": entry_single.sold_by_stop,
-                        "single_pnl": round(single_pnl, 2),
-                        "cap_after_pnl": round(capital_after_pnl, 2),
-                        "cap_clipped": round(capital, 2),
-                        "clip_loss": round(capital - capital_after_pnl, 2),
-                    })
+            if ordertype == "percent" and mode == "single" and entry_single.bought:
+                capital_flow_debug.append({
+                    "date": d,
+                    "cap_before": round(cap_before, 2),
+                    "bet_size": round(bet_size, 2),
+                    "ask": round(entry_single.record["ask"], 4) if entry_single.record else None,
+                    "won": single_won,
+                    "sold_by_stop": entry_single.sold_by_stop,
+                    "single_pnl": round(single_pnl, 2),
+                    "cap_after_pnl": round(capital_after_pnl, 2),
+                    "cap_clipped": round(capital, 2),
+                    "clip_loss": round(capital - capital_after_pnl, 2),
+                })
 
             capital_history.append((d, capital))
 
@@ -630,13 +636,16 @@ def compute_stats(day_records: list, mode: str, capital_history: list) -> Backte
 
     prefix = mode
     correct_mask = df[f"{prefix}_correct"]
-    lag_col = f"{prefix}_lag_h" if mode == "single" else "parcel1_lag_h"
-    correct_lags = df[correct_mask & df[lag_col].notna()][lag_col].values
+    lag_col = f"{prefix}_lag_h"
+    if lag_col not in df.columns:
+        lag_cols = [c for c in df.columns if c.endswith("_lag_h")]
+        lag_col = lag_cols[0] if lag_cols else None
+    correct_lags = df[correct_mask & df[lag_col].notna()][lag_col].values if lag_col else np.array([])
     total_pnl = df[f"{prefix}_pnl"].sum()
 
     stats = BacktestStats(
         total_days    = n,
-        total_trades  = int(df[f"{prefix}_correct"].sum() + df[f"{prefix}_premature"].sum()),
+        total_trades  = int((~df[f"{prefix}_missed"]).sum()),
         wins          = int(correct_mask.sum()),
         losses        = int((~correct_mask & ~df[f"{prefix}_missed"]).sum()),
         correct_pct   = round(correct_mask.mean() * 100, 1),
@@ -695,9 +704,13 @@ def print_dashboard(
     ordertype: str = "fixed",
     bet_value: float = 5.0,
     noise_std: float = 0.08,
-    model_dir: Path = Path("cities/munich/munich_peak_model"),  # caller deve passar city.model_dir
+    model_dir: Path | None = None,
 ) -> tuple:
     """Dashboard principal. Retorna stats_single."""
+
+    if model_dir is None:
+        from predictor import _get_city
+        model_dir = Path(_get_city().model_dir)
 
     auc_str = "?"
     prior_str = "não"

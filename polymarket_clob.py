@@ -45,6 +45,9 @@ try:
             self.status_code = status_code
             self.headers = _httpx.Headers(headers)
             self._content = content
+            self.url = ""
+            self.method = "GET"
+            self.reason_phrase = "OK" if status_code < 400 else "Error"
         @property
         def content(self): return self._content
         @property
@@ -57,11 +60,20 @@ try:
     _orig_send = _httpx.Client.send
     def _patched_send(self, request, **kwargs):
         url_str = str(request.url)
-        if 'polymarket.com' in url_str and '/book' in url_str:
+        if 'polymarket.com' not in url_str:
+            return _orig_send(self, request, **kwargs)
+        if '/book' in url_str:
             bad = ['user-agent', 'accept-encoding', 'host', 'connection', 'transfer-encoding']
             clean = {k: v for k, v in request.headers.items() if k.lower() not in bad}
-            if not request.content: clean.pop('content-length', None)
-            resp = cffi_requests.request(method=request.method, url=url_str, headers=clean, data=request.content, impersonate='chrome')
+            if not request.content:
+                clean.pop('content-length', None)
+            resp = cffi_requests.request(
+                method=request.method,
+                url=url_str,
+                headers=clean,
+                data=request.content,
+                impersonate='chrome',
+            )
             return _FakeResponse(resp.status_code, dict(resp.headers), resp.content)
         return _orig_send(self, request, **kwargs)
     _httpx.Client.send = _patched_send
@@ -250,6 +262,7 @@ class ClobClient:
             return b
         book = self.get_orderbook(token_id)
         if book and book.best_ask is not None:
+            b["gamma_price"] = b.get("price")
             b["ask"] = book.best_ask
             b["bid"] = book.best_bid
             b["spread"] = book.spread
@@ -257,10 +270,11 @@ class ClobClient:
             b["book"] = book
             b["price"] = book.best_ask
         else:
-            b["ask"] = b.get("price")
-            b["bid"] = b.get("price")
-            b["spread"] = None
-            b["mid"] = b.get("price")
+            estimated_price = float(b.get("price", 0.5) or 0.5)
+            b["ask"] = estimated_price
+            b["bid"] = round(estimated_price * 0.90, 4)
+            b["spread"] = round(b["ask"] - b["bid"], 4)
+            b["mid"] = estimated_price
             b["book"] = None
         return b
 
@@ -743,15 +757,9 @@ class PositionManager:
         Verifica se posições abertas de dias anteriores foram resolvidas.
         Em PAPER: compara temperatura contra bracket. Em REAL: refresh() trata.
         """
-        if self.mode == TradingMode.PAPER:
-            for pos in self.open_positions():
-                if pos.status != PositionStatus.OPEN:
-                    continue
-                # Para multi-cidade, precisamos da temperatura da cidade.
-                # Este metodo e chamado pelo live_bot com contexto adicional.
-                # A resolucao em PAPER e feita pelo live_bot directamente.
-                pass
-        # Em REAL, o refresh() ja cuida
+        # Em PAPER, a resolução é feita pelo live_bot com contexto da cidade.
+        # Em REAL, o refresh() já cuida disto via API.
+        return None
 
     def pnl_summary(self):
         invested = sum(p.size_usdc for p in self._positions)

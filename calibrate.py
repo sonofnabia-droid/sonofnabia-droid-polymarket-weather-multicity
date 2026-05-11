@@ -275,7 +275,6 @@ def simulate_strategy(signals_df: pd.DataFrame, city: CityConfig,
 def run_grid_search(signals_df: pd.DataFrame, city: CityConfig,
                     thresholds: list, hour_mins: list,
                     realistic_market: bool = False) -> list:
-    market_sim = SimulatedMarket(temp_range=city.temp_range, noise_std=0.05, seed=42) if realistic_market else None
     results = []
 
     total_combos = len(thresholds) * len(hour_mins)
@@ -288,6 +287,10 @@ def run_grid_search(signals_df: pd.DataFrame, city: CityConfig,
 
         for thr in thresholds:
             for hmin in hour_mins:
+                market_sim = (
+                    SimulatedMarket(temp_range=city.temp_range, noise_std=0.08, seed=42)
+                    if realistic_market else None
+                )
                 r = simulate_strategy(signals_df, city, thr, hmin,
                                       realistic_market=realistic_market,
                                       market_sim=market_sim)

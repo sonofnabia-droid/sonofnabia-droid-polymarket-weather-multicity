@@ -11,25 +11,19 @@ Uso:
 import argparse
 import json
 import time
-import requests
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone as _tz, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
-from predictor import set_city, load_models, build_features, predict_ensemble, compute_prev7, init_history_max
-#                                                                                           ^^^^^^^^^^^^^^^^
-
-import numpy as np
-
 from cities.config import CityConfig, get_city, CITIES
-from predictor import set_city, load_models, build_features, predict_ensemble, compute_prev7
+from predictor import set_city, load_models, predict_ensemble, compute_prev7, init_history_max
 from weather import (
     make_wu_session, make_om_session, fetch_wu_latest,
     fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
     bootstrap_today, bootstrap_om_today,
 )
 from modules.strategy_factory import create_strategy
-from polymarket_clob import ClobClient, TradingMode, GAMMA_API
+from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus
 from zoneinfo import ZoneInfo
 
 # ── Month names para Polymarket slug (usado em todos os eventos)
@@ -127,7 +121,8 @@ class PolymarketFetcher:
             def _jload(x):
                 if isinstance(x, str):
                     try: return json.loads(x)
-                    except: return []
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        return []
                 return x
 
             outcomes = _jload(m.get("outcomes", "[]"))
@@ -143,7 +138,8 @@ class PolymarketFetcher:
 
             if price_yes is None and prices:
                 try: price_yes = float(prices[0])
-                except: price_yes = 0.5
+                except (TypeError, ValueError):
+                    price_yes = 0.5
             if price_yes is None:
                 continue
 
@@ -276,6 +272,12 @@ class CityState:
     last_om_forecast_max: int | None = None
     last_market_min: tuple[int, int] | None = None
     daily_stats: DailyStats = None  # ← NOVO
+    last_p_ensemble: float = 0.0
+    last_p_lgbm: Optional[float] = None
+    last_target_bracket: Optional[dict] = None
+    _last_date: Optional[date] = None
+    _last_bankroll_hour: int = -1
+    _settled_position_ids: set[str] = field(default_factory=set)
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -297,8 +299,10 @@ def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
     """Converte (hour, minute) para slot 30min (truncar para CIMA)."""
     if minute < 30:
         return (hour, 30)
-    else:
-        return (hour + 1, 0)
+    h = hour + 1
+    if h == 24:
+        return (23, 30)
+    return (h, 0)
 
 
 def _save_daily_stats(stats: DailyStats, city_name: str) -> None:
@@ -446,6 +450,7 @@ def _tg_alert_stop_loss_blocked(city_name: str, position: dict, current_temp: fl
 
 def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> DailyStats:
     city = state.city
+    set_city(city.name)
     now = bot_now()
     city_today = city_date(city)
 
@@ -457,6 +462,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         state.series_today = {}
         state.cloud_by_hour = {}
         state.entry = create_strategy(city, mode=state.strategy_mode, parcel_size=PARCEL_SIZE)
+        if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+            state.entry._stop_loss_blocked_alerted = False
         state._last_date = city_today
         state.daily_stats = DailyStats(date=city_today)  # ← Reset no novo dia
         _bootstrap_state_today(state)
@@ -592,6 +599,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         "temp_lo": getattr(_pos, 'temp_lo', None),
                         "token_id": getattr(_pos, 'token_id', None),
                         "size_usdc": getattr(_pos, 'size_usdc', None),
+                        "order_id": getattr(_pos, 'order_id', None),
                         "strategy": "single",
                     }
             except Exception:
@@ -601,7 +609,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             state.entry.bought = True
             state.entry.record = _rec
             if hasattr(state.entry, 'strategy_used'):
-                state.entry.strategy_used = _rec.get("strategy")
+                state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
             print(f"  {C['yellow']}{city.name}: Posição existente detectada "
                   f"— a saltar entrada{R}")
 
@@ -840,6 +848,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                 realized_pnl = shares * bid_price - pos.get("size_usdc", 0)
 
                                 state.entry.mark_sold_by_stop(bid_price, realized_pnl)
+                                settled_id = str(pos.get("order_id") or pos.get("timestamp") or pos.get("bracket_label") or "")
+                                if settled_id:
+                                    state._settled_position_ids.add(settled_id)
                                 stats.stop_losses_triggered += 1
 
                                 stats.daily_pnl += realized_pnl
@@ -1021,6 +1032,40 @@ def main():
                     stats = _tick_city(state, args.run, city_bankroll)
 
                     daily_stats[city_name] = stats                               # ← NOVO
+
+                    if state.clob and hasattr(state.clob, "positions"):
+                        try:
+                            state.clob.positions.refresh(state.clob)
+                            today_key = city_today.isoformat()
+                            for pos in state.clob.positions.all_positions():
+                                pos_id = str(getattr(pos, "order_id", "") or "")
+                                if not pos_id or pos_id in state._settled_position_ids:
+                                    continue
+                                if getattr(pos, "date_opened", "") != today_key:
+                                    continue
+                                if getattr(pos, "status", None) in (
+                                    PositionStatus.WON,
+                                    PositionStatus.LOST,
+                                    PositionStatus.EXPIRED,
+                                ):
+                                    pnl = float(getattr(pos, "pnl_usd", 0.0) or 0.0)
+                                    stats.daily_pnl += pnl
+                                    state._settled_position_ids.add(pos_id)
+                        except Exception:
+                            pass
+
+                    if trading_mode == TradingMode.REAL:
+                        h_now = city_now(state.city).hour
+                        if state._last_bankroll_hour != h_now:
+                            try:
+                                usdc_balance = state.clob.get_usdc_balance() if state.clob else None
+                                if usdc_balance is not None:
+                                    city_bankrolls[city_name] = usdc_balance
+                                state._last_bankroll_hour = h_now
+                            except Exception:
+                                pass
+                    else:
+                        city_bankrolls[city_name] = default_bankroll + stats.daily_pnl
 
                     if is_multi:                                                  # ← NOVO
                         session_stats["total_trades"] = sum(                    # ← NOVO

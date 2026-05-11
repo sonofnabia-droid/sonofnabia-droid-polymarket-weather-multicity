@@ -32,7 +32,7 @@ LOG_DIR.mkdir(exist_ok=True)
 _city_config: CityConfig | None = None
 _city_zoneinfo: ZoneInfo | None = None
 _bot_zoneinfo: ZoneInfo = ZoneInfo("Europe/Lisbon")
-_last_save_time: float = 0.0
+_last_save_times: dict[str, float] = {}
 
 
 def set_city(name: str) -> CityConfig:
@@ -209,7 +209,7 @@ def build_features(slots_so_far: list[dict], current: dict,
     slope_w = vals[-4:] if n >= 4 else vals
     slope = float(np.polyfit(np.arange(len(slope_w)), slope_w, 1)[0]) if len(slope_w) >= 2 else 0.0
 
-    plateau = 1.0 if (np.std(vals[-6:]) < 0.4 and n >= 4) else 0.0
+    plateau = 1.0 if (n >= 6 and np.std(vals[-6:]) < 0.4) else 0.0
     radiation = float(np.cos((slot_frac - 0.5) * 2 * np.pi)) * (1 - cloud / 100)
     hum_drop_1h = lagh(3) - hums[-1] if n >= 3 else 0.0
 
@@ -362,16 +362,16 @@ def compute_prev7(history: dict, d: date, city_name: str | None = None) -> float
         return climatology.get(d.month, 15.0)
     days = sorted(history.keys())
     if d not in days:
-        recent = days[-7:]
+        recent = [dd for dd in days if dd < d and (d - dd).days <= 7]
         if recent:
             return float(np.mean([history[x] for x in recent]))
         return climatology.get(d.month, 15.0)
     idx = days.index(d)
     if idx == 0:
-        return float(history[d])
-    window = days[max(0, idx - 7):idx]
+        return climatology.get(d.month, float(history[d]))
+    window = [dd for dd in days[:idx] if (d - dd).days <= 7]
     vals = [history[x] for x in window]
-    return float(np.mean(vals)) if vals else float(history[d])
+    return float(np.mean(vals)) if vals else climatology.get(d.month, float(history[d]))
 
 
 # ══════════════════════════════════════════════════════
@@ -416,7 +416,7 @@ def update_history_max(history: dict, slots_so_far: list[dict], city_name: str |
     FIX: só guardar em disco a cada 5 minutos ou se a máxima subiu
          para reduzir I/O excessivo.
     """
-    global _last_save_time
+    global _last_save_times
     if not slots_so_far:
         return
 
@@ -443,9 +443,11 @@ def update_history_max(history: dict, slots_so_far: list[dict], city_name: str |
     # Só guardar em disco a cada 5 minutos ou se a máxima subiu
     import time
     now = time.time()
-    if now - _last_save_time >= 300 or old_max is None or cur_max > old_max:
+    key = city_name or _get_city().name
+    last = _last_save_times.get(key, 0.0)
+    if now - last >= 300 or old_max is None or cur_max > old_max:
         _save_history_max_file(history, city_name)
-        _last_save_time = now
+        _last_save_times[key] = now
 
 
 # ══════════════════════════════════════════════════════

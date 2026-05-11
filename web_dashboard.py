@@ -184,7 +184,10 @@ def add_no_cache_headers(response):
 
 @app.get("/")
 def index():
-    return render_template("dashboard.html")
+    try:
+        return render_template("dashboard.html")
+    except Exception:
+        return "<h1>Dashboard HTML template missing. API available at /api/snapshot</h1>", 200
 
 
 @app.get("/api/snapshot")
