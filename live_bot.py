@@ -367,6 +367,37 @@ def _bootstrap_state_today(state: CityState) -> None:
     }
 
 
+def _settle_paper_positions_for_day(state: CityState, city_today: date) -> float:
+    """Resolve PAPER positions abertas do dia atual usando o pico observado."""
+    if not state.clob or not hasattr(state.clob, "positions"):
+        return 0.0
+
+    if state.slots_so_far:
+        peak_temp = max(float(s["temp_c"]) for s in state.slots_so_far)
+    elif state.latest_obs and state.latest_obs.get("temp_c") is not None:
+        peak_temp = float(state.latest_obs["temp_c"])
+    else:
+        peak_temp = 0.0
+
+    today_key = city_today.isoformat()
+    settled_pnl = 0.0
+    for pos in state.clob.positions.open_positions():
+        if str(getattr(pos, "date_opened", "")) != today_key:
+            continue
+        pos_id = str(
+            getattr(pos, "order_id", "")
+            or getattr(pos, "token_id", "")
+            or getattr(pos, "bracket_label", "")
+        )
+        if pos_id and pos_id in state._settled_position_ids:
+            continue
+        if state.clob.positions.resolve_paper_position(pos, peak_temp):
+            settled_pnl += float(getattr(pos, "pnl_usd", 0.0) or 0.0)
+            if pos_id:
+                state._settled_position_ids.add(pos_id)
+    return settled_pnl
+
+
 def _get_tg():
     """Singleton lazy de tg.TG() — None se Telegram não configurado."""
     if not hasattr(_get_tg, "_instance"):
@@ -1020,6 +1051,9 @@ def main():
 
     # Daily stats por cidade — para passar ao dashboard                          # ← NOVO
     daily_stats: dict = {cn: None for cn in city_names}                         # ← NOVO
+    session_pnl_cumulative = {cn: 0.0 for cn in city_names}
+    session_last_reported_pnl = {cn: 0.0 for cn in city_names}
+    session_last_dates = {cn: None for cn in city_names}
 
     try:
         while True:
@@ -1031,6 +1065,23 @@ def main():
                 city_today = city_date(city)
 
                 city_h_now = city_now(city).hour
+                if trading_mode == TradingMode.PAPER and city_h_now > city.day_end:
+                    try:
+                        settled_pnl = _settle_paper_positions_for_day(state, city_today)
+                        if settled_pnl:
+                            stats = daily_stats.get(city_name) or state.daily_stats
+                            stats.daily_pnl += settled_pnl
+                            daily_stats[city_name] = stats
+                            if is_multi:
+                                session_pnl_cumulative[city_name] += settled_pnl
+                                session_last_reported_pnl[city_name] = getattr(
+                                    stats, "daily_pnl", 0.0
+                                )
+                                session_last_dates[city_name] = stats.date
+                                session_stats["total_pnl"] = sum(session_pnl_cumulative.values())
+                    except Exception as e:
+                        print(f"  {C['yellow']}{city.name}: PAPER settlement failed: {e}{R}")
+
                 if not (city.day_start <= city_h_now <= city.day_end):
                     continue
 
@@ -1072,7 +1123,7 @@ def main():
                             except Exception:
                                 pass
                     else:
-                        city_bankrolls[city_name] = default_bankroll + stats.daily_pnl
+                        city_bankrolls[city_name] = max(0.0, default_bankroll + stats.daily_pnl)
 
                     if is_multi:                                                  # ← NOVO
                         session_stats["total_trades"] = sum(                    # ← NOVO
@@ -1080,11 +1131,17 @@ def main():
                             for s in states.values()                             # ← NOVO
                             if getattr(s, "daily_stats", None)                  # ← NOVO
                         )                                                        # ← NOVO
-                        session_stats["total_pnl"] = sum(                       # ← NOVO
-                            getattr(s.daily_stats, "daily_pnl", 0.0)            # ← NOVO
-                            for s in states.values()                             # ← NOVO
-                            if getattr(s, "daily_stats", None)                  # ← NOVO
-                        )                                                        # ← NOVO
+                        current_stats = daily_stats.get(city_name)
+                        if current_stats:
+                            current_date = current_stats.date
+                            if session_last_dates.get(city_name) != current_date:
+                                session_last_dates[city_name] = current_date
+                                session_last_reported_pnl[city_name] = 0.0
+                            current_daily_pnl = float(getattr(current_stats, "daily_pnl", 0.0) or 0.0)
+                            delta = current_daily_pnl - session_last_reported_pnl[city_name]
+                            session_pnl_cumulative[city_name] += delta
+                            session_last_reported_pnl[city_name] = current_daily_pnl
+                        session_stats["total_pnl"] = sum(session_pnl_cumulative.values())  # ← NOVO
 
                 except Exception as e:
                     print(f"  {C['red']}{city.name}: Tick failed: {e}{R}")

@@ -48,37 +48,27 @@ try:
             self.url = ""
             self.method = "GET"
             self.reason_phrase = "OK" if status_code < 400 else "Error"
+
         @property
-        def content(self): return self._content
+        def content(self):
+            return self._content
+
         @property
-        def text(self): return self._content.decode('utf-8')
-        def json(self): return _json.loads(self.text)
+        def text(self):
+            return self._content.decode("utf-8")
+
+        def json(self):
+            return _json.loads(self.text)
+
         def raise_for_status(self):
             if self.status_code >= 400:
-                raise _httpx.HTTPStatusError(f'Erro {self.status_code}', request=None, response=self)
-
-    _orig_send = _httpx.Client.send
-    def _patched_send(self, request, **kwargs):
-        url_str = str(request.url)
-        if 'polymarket.com' not in url_str:
-            return _orig_send(self, request, **kwargs)
-        if '/book' in url_str:
-            bad = ['user-agent', 'accept-encoding', 'host', 'connection', 'transfer-encoding']
-            clean = {k: v for k, v in request.headers.items() if k.lower() not in bad}
-            if not request.content:
-                clean.pop('content-length', None)
-            resp = cffi_requests.request(
-                method=request.method,
-                url=url_str,
-                headers=clean,
-                data=request.content,
-                impersonate='chrome',
-            )
-            return _FakeResponse(resp.status_code, dict(resp.headers), resp.content)
-        return _orig_send(self, request, **kwargs)
-    _httpx.Client.send = _patched_send
-    logger.info("Cloudflare Bypass ativo (apenas /book).")
+                raise _httpx.HTTPStatusError(
+                    f"Erro {self.status_code}", request=None, response=self
+                )
 except ImportError:
+    cffi_requests = None
+    _httpx = None
+    _json = None
     logger.warning("curl_cffi não instalado — Cloudflare bypass desactivado.")
 
 
@@ -250,6 +240,63 @@ class ClobClient:
 
         return client
 
+    def _coerce_orderbook_levels(self, levels):
+        parsed = []
+        if not levels:
+            return parsed
+        for lvl in levels:
+            if isinstance(lvl, dict):
+                price = lvl.get("price", lvl.get("p"))
+                size = lvl.get("size", lvl.get("quantity", lvl.get("q")))
+            else:
+                price = getattr(lvl, "price", None)
+                size = getattr(lvl, "size", None)
+            if price is None or size is None:
+                continue
+            try:
+                parsed.append(OrderBookLevel(float(price), float(size)))
+            except Exception:
+                continue
+        return parsed
+
+    def _orderbook_from_payload(self, token_id: str, payload) -> OrderBook | None:
+        if payload is None:
+            return None
+
+        if isinstance(payload, dict):
+            bids_raw = payload.get("bids") or payload.get("buy") or payload.get("bid") or []
+            asks_raw = payload.get("asks") or payload.get("sell") or payload.get("ask") or []
+        else:
+            bids_raw = getattr(payload, "bids", []) or []
+            asks_raw = getattr(payload, "asks", []) or []
+
+        bids = sorted(self._coerce_orderbook_levels(bids_raw), key=lambda x: -x.price)
+        asks = sorted(self._coerce_orderbook_levels(asks_raw), key=lambda x: x.price)
+        if not bids and not asks:
+            return None
+        return OrderBook(token_id=token_id, timestamp=time.time(), bids=bids, asks=asks)
+
+    def _fetch_public_orderbook(self, token_id: str):
+        if cffi_requests is None:
+            return None
+
+        for params in ({"token_id": token_id}, {"asset_id": token_id}):
+            try:
+                resp = cffi_requests.get(
+                    f"{CLOB_HOST}/book",
+                    params=params,
+                    timeout=15,
+                    impersonate="chrome",
+                )
+                if resp.status_code >= 400:
+                    continue
+                payload = resp.json()
+                if payload:
+                    return payload
+            except Exception:
+                continue
+        return None
+
     # ── Order Book ─────────────────────────────────────
 
     def get_orderbook(self, token_id: str) -> OrderBook | None:
@@ -257,20 +304,16 @@ class ClobClient:
             return None
         try:
             book_raw = self._client.get_order_book(token_id)
-            if isinstance(book_raw, dict):
-                return None
-            bids = sorted(
-                [OrderBookLevel(float(b.price), float(b.size)) for b in (book_raw.bids or [])],
-                key=lambda x: -x.price,
-            )
-            asks = sorted(
-                [OrderBookLevel(float(a.price), float(a.size)) for a in (book_raw.asks or [])],
-                key=lambda x: x.price,
-            )
-            return OrderBook(token_id=token_id, timestamp=time.time(), bids=bids, asks=asks)
+            book = self._orderbook_from_payload(token_id, book_raw)
+            if book is not None:
+                return book
         except Exception as e:
             if "404" not in str(e):
                 logger.warning("get_orderbook falhou: %s", e)
+            payload = self._fetch_public_orderbook(token_id)
+            book = self._orderbook_from_payload(token_id, payload)
+            if book is not None:
+                return book
             return None
 
     def enrich_bracket(self, bracket: dict) -> dict:
@@ -734,6 +777,34 @@ class PositionManager:
                         pos.pnl_pct = -100.0
             pos.last_updated = now_str
         self._save()
+
+    def resolve_paper_position(self, pos: "Position", peak_temp: float) -> bool:
+        from datetime import datetime as _dt
+
+        if pos.status != PositionStatus.OPEN:
+            return False
+
+        peak_int = int(round(peak_temp))
+        if pos.temp_hi >= 99:
+            won = peak_int >= int(round(pos.temp_lo))
+        elif pos.temp_lo <= -99:
+            won = peak_int <= int(round(pos.temp_hi))
+        else:
+            won = int(round(pos.temp_lo)) <= peak_int <= int(round(pos.temp_hi))
+
+        if won:
+            pos.status = PositionStatus.WON
+            pos.pnl_usd = round((1.0 - pos.entry_ask) * pos.shares, 2)
+            pos.pnl_pct = round((1.0 / pos.entry_ask - 1) * 100, 2) if pos.entry_ask else None
+        else:
+            pos.status = PositionStatus.LOST
+            pos.pnl_usd = round(-pos.size_usdc, 2)
+            pos.pnl_pct = -100.0
+
+        pos.current_mid = None
+        pos.last_updated = _dt.now().isoformat()
+        self._save()
+        return True
 
     def _get_mid(self, pos, clob_client):
         if not clob_client or not pos.token_id:

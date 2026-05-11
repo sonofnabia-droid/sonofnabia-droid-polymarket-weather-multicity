@@ -158,13 +158,23 @@ def decide_action(new_cal: dict, old_cfg: dict | None,
     if old_score is None:
         return "UPDATE", "existing has no _meta.outcome_score"
 
-    # Margem mínima
-    threshold = old_score * (1 + margin)
-    if new_score >= threshold:
-        improvement_pct = (new_score - old_score) / old_score * 100 if old_score else 0
-        return "UPDATE", f"+{improvement_pct:.1f}% (>= {margin*100:.0f}% threshold)"
+    if old_score > 0:
+        threshold = old_score * (1 + margin)
+        if new_score >= threshold:
+            improvement_pct = (new_score - old_score) / old_score * 100
+            return "UPDATE", f"+{improvement_pct:.1f}% (>= {margin*100:.0f}% threshold)"
 
-    diff_pct = (new_score - old_score) / old_score * 100 if old_score else 0
+    elif old_score < 0:
+        threshold = old_score * (1 - margin)
+        if new_score >= threshold:
+            improvement_pct = (new_score - old_score) / abs(old_score) * 100
+            return "UPDATE", f"+{improvement_pct:.1f}% (>= {margin*100:.0f}% threshold)"
+
+    else:
+        if new_score > 0:
+            return "UPDATE", f"new positive score ({new_score:.3f})"
+
+    diff_pct = (new_score - old_score) / abs(old_score) * 100 if old_score else 0
     return "KEEP", f"{diff_pct:+.1f}% (below {margin*100:.0f}% threshold)"
 
 
