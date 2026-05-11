@@ -570,15 +570,20 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         if bets_path.exists():
             try:
                 existing_bets = json.loads(bets_path.read_text())
+                existing_bets = [
+                    b for b in existing_bets
+                    if b.get("market_slug", current_market_slug) == current_market_slug
+                ]
                 if existing_bets:
                     _skip = True
-                    first = existing_bets[0]
+                    first = existing_bets[-1]
                     _rec = {
                         "ask": first.get("ask"),
                         "temp_hi": first.get("temp_hi"),
                         "temp_lo": first.get("temp_lo"),
                         "token_id": first.get("token_id"),
                         "size_usdc": first.get("bet_size"),
+                        "market_slug": first.get("market_slug", current_market_slug),
                         "strategy": first.get("strategy"),
                     }
             except Exception:
@@ -592,7 +597,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                              and getattr(p, "market_slug", "") == current_market_slug]
                 if _existing:
                     _skip = True
-                    _pos = _existing[0]
+                    _pos = _existing[-1]
                     _rec = {
                         "ask": getattr(_pos, 'entry_ask', None),
                         "temp_hi": getattr(_pos, 'temp_hi', None),
@@ -600,6 +605,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         "token_id": getattr(_pos, 'token_id', None),
                         "size_usdc": getattr(_pos, 'size_usdc', None),
                         "order_id": getattr(_pos, 'order_id', None),
+                        "market_slug": getattr(_pos, 'market_slug', current_market_slug),
                         "strategy": "single",
                     }
             except Exception:
@@ -710,6 +716,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     "timestamp":     city_now(city).isoformat(),
                     "strategy":      action.get("strategy") or state.strategy_mode,
                 }
+                bet_record["market_slug"] = current_market_slug
 
                 if trading_mode_str == "real":
                     if not token_id:

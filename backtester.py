@@ -372,7 +372,7 @@ def _bracket_contains_peak(temp_lo: float, temp_hi: float, peak_temp: float) -> 
 
 
 def _pnl_per_dollar(ask: float, won: bool) -> float:
-    if not ask or ask <= 0 or ask >= 1:
+    if not ask or ask <= 0:
         return -1.0 if not won else 0.0
     return (1.0 / ask) - 1.0 if won else -1.0
 

@@ -165,16 +165,38 @@ class ClobClient:
         self._daily_date = None
         self._order_log = []
         self.positions = PositionManager(mode, log_dir)
-        self._client = self._init_clob_client(private_key) if private_key else None
+        self._client = self._init_clob_client(
+            private_key,
+            allow_read_only=(mode == TradingMode.PAPER),
+        )
 
-    def _init_clob_client(self, private_key: str):
+    def _init_clob_client(self, private_key: str, allow_read_only: bool = False):
         """Inicializa py_clob_client_v2 e obtém credenciais."""
         from py_clob_client_v2 import ClobClient as _ClobClient
 
         funder = os.environ.get("POLY_FUNDER", "").strip()
         signature_type = 2 if funder else int(os.environ.get("POLY_SIGNATURE_TYPE", 0))
 
-        client_kwargs = {"host": CLOB_HOST, "chain_id": CHAIN_ID, "key": private_key}
+        client_kwargs = {"host": CLOB_HOST, "chain_id": CHAIN_ID}
+        if private_key:
+            client_kwargs["key"] = private_key
+        elif allow_read_only:
+            read_only_attempts = [
+                {"host": CLOB_HOST, "chain_id": CHAIN_ID, "key": ""},
+                {"host": CLOB_HOST, "chain_id": CHAIN_ID},
+            ]
+            last_error = None
+            for kwargs in read_only_attempts:
+                try:
+                    client = _ClobClient(**kwargs)
+                    logger.info("CLOB read-only client inicializado (PAPER)")
+                    return client
+                except Exception as e:
+                    last_error = e
+            logger.warning("CLOB read-only init falhou: %s", last_error)
+            return None
+        else:
+            return None
         if signature_type != 0:
             client_kwargs["signature_type"] = signature_type
             client_kwargs["funder"] = funder
