@@ -111,8 +111,7 @@ FEATURE_COLS = [
 
 def load_models(city: str = "munich", model_dir: Path | None = None) -> dict:
     """Carrega modelos para a cidade especificada."""
-    set_city(city)
-    config = _get_city()
+    config = get_city(city)
 
     if model_dir is None:
         model_dir = Path(config.model_dir)
@@ -283,7 +282,7 @@ def predict_ensemble(
     zscore_detector=None,
 ) -> dict:
     """Predição ensemble (agora LightGBM puro). Mantém assinatura para compatibilidade."""
-    city = models.get("_city", _get_city())
+    city = models.get("_city") or get_city("munich")
     hour_min = city.hour_min if city.hour_min is not None else 6
 
     hour = current["hour"]

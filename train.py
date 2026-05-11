@@ -231,12 +231,17 @@ def _compute_expanding_prior(dataset: pd.DataFrame) -> tuple[pd.Series, dict]:
     for year in years:
         year_data = sorted_dataset[sorted_dataset["date"].dt.year == year]
 
-        for row in year_data.itertuples(index=True):
-            idx = row.Index
-            key = (int(row.month), int(row.hour), int(row.slot30))
-            acc = prior_accumulator.get(key)
-            if acc and acc["count"] > 0:
-                prior_values.at[idx] = acc["sum"] / acc["count"]
+        keys = list(zip(
+            year_data["month"].astype(int),
+            year_data["hour"].astype(int),
+            year_data["slot30"].astype(int),
+        ))
+        prior_values.loc[year_data.index] = [
+            (prior_accumulator[key]["sum"] / prior_accumulator[key]["count"])
+            if key in prior_accumulator and prior_accumulator[key]["count"] > 0
+            else 0.5
+            for key in keys
+        ]
 
         for (m, h, s), group in year_data.groupby(["month", "hour", "slot30"]):
             key = (int(m), int(h), int(s))
