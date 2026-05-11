@@ -448,7 +448,7 @@ def bootstrap_om_today(city: CityConfig, session: requests.Session) -> tuple[dic
     return series, slots
 
 
-def cloud_from_series(city_name: str, rows_cache: list) -> dict[int, int]:
+def cloud_from_series(rows_cache: list) -> dict[int, int]:
     """Índice hora -> cobertura de nuvens, a partir do cache de rows."""
     cloud = {}
     for r in rows_cache:

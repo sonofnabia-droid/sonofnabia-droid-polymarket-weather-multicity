@@ -60,8 +60,8 @@ class CityConfig:
 
     def __post_init__(self) -> None:
         model_path = Path(self.model_dir)
-        if not model_path.is_absolute() and model_path.parent == Path("."):
-            self.model_dir = str(self.city_dir / model_path)
+        if not model_path.is_absolute():
+            self.model_dir = str(self.city_dir / model_path.name)
 
     @property
     def city_dir(self) -> Path:
