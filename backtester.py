@@ -1035,32 +1035,30 @@ def print_dashboard(
     return stats_single
 
 
-# ══════════════════════════════════════════════════════
-#  MAIN
-# ══════════════════════════════════════════════════════
-def main():
-    parser = argparse.ArgumentParser(description="Backtester multi-cidade")
-    parser.add_argument("--city", type=str, default="munich", choices=list(CITIES.keys()),
-                        help="Cidade para backtest (default: munich)")
-    parser.add_argument("--mode", choices=["single"], default="single")
-    parser.add_argument("--years", type=int, default=3)
-    parser.add_argument("--start", type=str, help="Data início (YYYY-MM-DD)")
-    parser.add_argument("--end", type=str, help="Data fim (YYYY-MM-DD)")
-    parser.add_argument("--ordertype", choices=["fixed","percent"], default="fixed")
-    parser.add_argument("--bet", type=float, default=5.0,
-                        help="$ absoluto se fixed, %% do capital se percent")
-    parser.add_argument("--noise", type=float, default=0.05,
-                        help="Ruído gaussiano no ask do mercado simulado (default 0.05 = 5¢). "
-                             "0.0 = determinístico.")
-    args = parser.parse_args()
+def _parse_city_list(cities_arg: str | None, fallback_city: str) -> list[str]:
+    if not cities_arg:
+        return [fallback_city]
+    if cities_arg.strip().lower() == "all":
+        return list(CITIES.keys())
 
-    city = get_city(args.city)
-    set_city(args.city)
+    city_names = [c.strip().lower() for c in cities_arg.split(",") if c.strip()]
+    unknown = [c for c in city_names if c not in CITIES]
+    if unknown:
+        raise SystemExit(
+            f"Cidade(s) desconhecida(s): {', '.join(unknown)}. "
+            f"Disponíveis: {', '.join(CITIES.keys())}"
+        )
+    return city_names
+
+
+def _run_city_backtest(args, city_name: str):
+    city = get_city(city_name)
+    set_city(city_name)
 
     _console.print(f"\n[bold cyan]{city.name.title()} Backtester[/bold cyan]")
     _console.print("[1/4] Modelos...")
     model_dir = Path(city.model_dir)
-    models = load_models(args.city)
+    models = load_models(city_name)
 
     _console.print("\n[2/4] Dados...")
     df_all = load_data(Path(city.csv_path), city)
@@ -1077,6 +1075,23 @@ def main():
 
     df = df_all[(df_all["date"] >= start_date) & (df_all["date"] <= end_date)].copy()
     _console.print(f"  {len(df):,} slots | {start_date} → {end_date}")
+    if df.empty:
+        _console.print(f"  [yellow]Sem dados para {city.name} nesta janela. A saltar.[/yellow]")
+        return {
+            "city": city.name,
+            "start_date": start_date,
+            "end_date": end_date,
+            "total_days": 0,
+            "correct_pct": None,
+            "premature_pct": None,
+            "missed_pct": None,
+            "lag_mean_h": None,
+            "total_pnl": None,
+            "sharpe": None,
+            "out_json": None,
+            "skipped": True,
+            "reason": "sem dados na janela",
+        }
 
     _console.print(f"\n[3/4] Backtest (mode={args.mode}, {args.ordertype}={args.bet}, ruído={args.noise})...")
     yearly, capital_history, day_records, capital_flow_debug = run_backtest(
@@ -1201,6 +1216,117 @@ def main():
                 f"${row['cap_max']:.0f}",
             )
         _console.print(tbl_q)
+
+    return {
+        "city": city.name,
+        "start_date": start_date,
+        "end_date": end_date,
+        "total_days": stats_single.total_days,
+        "correct_pct": stats_single.correct_pct,
+        "premature_pct": stats_single.premature_pct,
+        "missed_pct": stats_single.missed_pct,
+        "lag_mean_h": stats_single.lag_mean_h,
+        "total_pnl": stats_single.total_pnl,
+        "sharpe": stats_single.sharpe,
+        "out_json": out_json,
+    }
+
+
+def _print_multi_summary(rows: list[dict]) -> None:
+    if len(rows) <= 1:
+        return
+
+    table = Table(
+        title="Resumo multi-cidade",
+        box=rich_box.SIMPLE_HEAVY,
+        header_style="bold cyan",
+        show_header=True,
+    )
+    table.add_column("Cidade", style="bold")
+    table.add_column("Dias", justify="right")
+    table.add_column("Correct", justify="right")
+    table.add_column("Premat.", justify="right")
+    table.add_column("Missed", justify="right")
+    table.add_column("Lag h", justify="right")
+    table.add_column("PnL", justify="right")
+    table.add_column("Sharpe", justify="right")
+
+    for row in rows:
+        if row.get("error") or row.get("skipped"):
+            table.add_row(
+                row["city"],
+                str(row.get("total_days", 0)),
+                "—",
+                "—",
+                "—",
+                "—",
+                "[yellow]SKIP[/yellow]" if row.get("skipped") else "[red]ERROR[/red]",
+                "—",
+            )
+            continue
+
+        pnl = row["total_pnl"]
+        pnl_style = "green" if pnl >= 0 else "red"
+        table.add_row(
+            row["city"],
+            str(row["total_days"]),
+            f"{row['correct_pct']:.1f}%",
+            f"{row['premature_pct']:.1f}%",
+            f"{row['missed_pct']:.1f}%",
+            f"{row['lag_mean_h']:.2f}",
+            f"[{pnl_style}]${pnl:+.2f}[/{pnl_style}]",
+            f"{row['sharpe']:.2f}",
+        )
+
+    _console.print()
+    _console.print(table)
+
+
+# ══════════════════════════════════════════════════════
+#  MAIN
+# ══════════════════════════════════════════════════════
+def main():
+    parser = argparse.ArgumentParser(description="Backtester multi-cidade")
+    parser.add_argument("--city", type=str, default="munich", choices=list(CITIES.keys()),
+                        help="Cidade para backtest (default: munich)")
+    parser.add_argument("--cities", type=str,
+                        help="Cidades separadas por vírgula, ou 'all'. Ex: munich,dallas,ankara")
+    parser.add_argument("--mode", choices=["single"], default="single")
+    parser.add_argument("--years", type=int, default=3)
+    parser.add_argument("--start", type=str, help="Data início (YYYY-MM-DD)")
+    parser.add_argument("--end", type=str, help="Data fim (YYYY-MM-DD)")
+    parser.add_argument("--ordertype", choices=["fixed","percent"], default="fixed")
+    parser.add_argument("--bet", type=float, default=5.0,
+                        help="$ absoluto se fixed, %% do capital se percent")
+    parser.add_argument("--noise", type=float, default=0.05,
+                        help="Ruído gaussiano no ask do mercado simulado (default 0.05 = 5¢). "
+                             "0.0 = determinístico.")
+    args = parser.parse_args()
+
+    city_names = _parse_city_list(args.cities, args.city)
+    rows = []
+    for idx, city_name in enumerate(city_names, 1):
+        if len(city_names) > 1:
+            _console.rule(f"[bold cyan][{idx}/{len(city_names)}] {city_name}[/bold cyan]")
+        try:
+            rows.append(_run_city_backtest(args, city_name))
+        except Exception as exc:
+            if len(city_names) == 1:
+                raise
+            _console.print(f"  [red]{city_name}: backtest falhou: {exc}[/red]")
+            rows.append({
+                "city": city_name,
+                "total_days": 0,
+                "correct_pct": None,
+                "premature_pct": None,
+                "missed_pct": None,
+                "lag_mean_h": None,
+                "total_pnl": None,
+                "sharpe": None,
+                "error": str(exc),
+            })
+
+    _print_multi_summary(rows)
 
 
 if __name__ == "__main__":
