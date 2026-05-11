@@ -63,6 +63,7 @@ class SingleEntry:
         self.bought = False
         self.record: dict | None = None
         self.sold_by_stop = False
+        self.strategy_used: str | None = None
 
     def evaluate(self, p_ensemble: float, hour: int, market: dict | None,
                  running_max: float, forecast_agreement: dict | None) -> list[dict]:
@@ -126,6 +127,13 @@ class SingleEntry:
         self.bought = True
         self.record = record
         self.sold_by_stop = False
+        self.strategy_used = record.get("strategy") if isinstance(record, dict) else None
+
+    def restore(self, record: dict, strategy_used: str | None = None) -> None:
+        self.bought = True
+        self.record = record
+        self.sold_by_stop = bool(record.get("sold_by_stop", False)) if isinstance(record, dict) else False
+        self.strategy_used = strategy_used or (record.get("strategy") if isinstance(record, dict) else None)
 
     def mark_sold_by_stop(self, sell_price: float, pnl: float) -> None:
         self.sold_by_stop = True

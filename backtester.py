@@ -59,6 +59,8 @@ SEASONS = {
     "summer": [6, 7, 8],  "autumn": [9, 10, 11],
 }
 
+TAKER_FEE_RATE = 0.02
+
 
 # ══════════════════════════════════════════════════════
 #  SIMULATED MARKET — baseado em climatologia + ruído
@@ -211,6 +213,7 @@ class SimulatedMarket:
                 "bid": round(bid, 4),
                 "temp_lo": lo,
                 "temp_hi": hi,
+                "token_id": f"SIM_{int(lo)}_{int(hi)}",
             })
         return brackets
 
@@ -366,8 +369,10 @@ def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
         return 0.0
     actual_invested = shares * ask
     if won:
-        return float(shares) - actual_invested
-    return -actual_invested
+        gross = float(shares) - actual_invested
+        return gross - abs(gross) * TAKER_FEE_RATE
+    gross = -actual_invested
+    return gross - abs(gross) * TAKER_FEE_RATE
 
 
 def _compute_sharpe_sortino(capital_history: list) -> tuple:
@@ -554,6 +559,8 @@ def run_backtest(
                             "temp_lo": best["temp_lo"],
                             "temp_hi": best["temp_hi"],
                             "size_usdc": act["size_usdc"],
+                            "token_id": best.get("token_id"),
+                            "strategy": "single",
                         })
                         break
 
@@ -565,19 +572,17 @@ def run_backtest(
                     matching = [b for b in brackets
                                 if b["temp_lo"] == pos["temp_lo"]
                                 and b["temp_hi"] == pos["temp_hi"]]
-                    if matching:
-                        sell_bid = matching[0]["bid"]
-                    else:
-                        sell_bid = 0.02  # liquidez zero
+                    sell_bid = matching[0]["bid"] if matching else 0.02  # liquidez zero
 
-                        # PnL realizado: vendemos ao bid depois de comprar shares inteiras
-                        entry_ask = pos["ask"]
-                        shares = math.floor(pos["size_usdc"] / entry_ask) if entry_ask > 0 else 0
-                        invested = shares * entry_ask
-                        sell_value = shares * sell_bid
-                        realized_pnl = sell_value - invested
+                    # PnL realizado: vendemos ao bid depois de comprar shares inteiras
+                    entry_ask = pos["ask"]
+                    shares = math.floor(pos["size_usdc"] / entry_ask) if entry_ask > 0 else 0
+                    invested = shares * entry_ask
+                    sell_value = shares * sell_bid
+                    gross_pnl = sell_value - invested
+                    realized_pnl = gross_pnl - abs(gross_pnl) * TAKER_FEE_RATE
 
-                        entry_single.mark_sold_by_stop(sell_bid, realized_pnl)
+                    entry_single.mark_sold_by_stop(sell_bid, realized_pnl)
 
             # ── Avaliação fim-de-dia ──
             # SINGLE

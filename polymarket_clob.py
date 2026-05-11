@@ -31,6 +31,18 @@ CHAIN_ID = 137
 TICK_SIZE = 0.01
 MIN_SIZE = 5.0
 FEE_RATE = 0.0
+TAKER_FEE_RATE = float(os.environ.get("POLY_TAKER_FEE_RATE", "0.02"))
+
+
+def round_to_tick(price: float, tick_size: float = TICK_SIZE, direction: str = "nearest") -> float:
+    if tick_size <= 0:
+        return round(price, 4)
+    steps = price / tick_size
+    if direction == "up":
+        return round(math.ceil(steps) * tick_size, 4)
+    if direction == "down":
+        return round(math.floor(steps) * tick_size, 4)
+    return round(round(steps) * tick_size, 4)
 
 # ==========================================
 # CLOUDFLARE BYPASS (apenas para Orderbooks Públicos)
@@ -402,7 +414,7 @@ class ClobClient:
 
     def buy_yes(self, token_id: str, price: float, size_usdc: float,
                 bracket_label: str = "", market_slug: str = "",
-                order_type: str = "FOK", dry_run: bool = False,
+                order_type: str = "GTC", dry_run: bool = False,
                 temp_lo: float | None = None, temp_hi: float | None = None) -> OrderResult:
         from datetime import datetime as _dt
         self._reset_daily_if_needed()
@@ -418,7 +430,22 @@ class ClobClient:
                                error=f"Tamanho ${size_usdc:.2f} abaixo do mínimo ${MIN_SIZE:.2f}",
                                timestamp=ts)
 
-        shares = math.floor(size_usdc / price) if order_type.upper() == "FOK" else round(size_usdc / price, 4)
+        if market_slug:
+            today = ts[:10]
+            if any(
+                p.status == PositionStatus.OPEN
+                and p.date_opened == today
+                and p.market_slug == market_slug
+                for p in self.positions.open_positions()
+            ):
+                return OrderResult(
+                    success=False, mode=self.mode,
+                    error=f"Posição já aberta para {market_slug} hoje.",
+                    timestamp=ts,
+                )
+
+        buy_price = round_to_tick(price, TICK_SIZE, "up")
+        shares = math.floor(size_usdc / buy_price) if order_type.upper() == "FOK" else round(size_usdc / buy_price, 4)
 
         # ── PAPER MODE ────────────────────────────────
         if self.mode == TradingMode.PAPER:
@@ -426,13 +453,13 @@ class ClobClient:
                 success=True, mode=TradingMode.PAPER,
                 order_id=f"PAPER-{int(time.time())}",
                 token_id=token_id, side="BUY", outcome="YES",
-                price=round(price, 4), size_usdc=round(size_usdc, 2),
+                price=buy_price, size_usdc=round(size_usdc, 2),
                 shares=shares, status="SIMULATED", timestamp=ts, simulated=True,
             )
             self._log_order(result, bracket_label)
             self.positions.add(Position(
                 date_opened=ts[:10], bracket_label=bracket_label,
-                token_id=token_id, entry_ask=round(price, 4),
+                token_id=token_id, entry_ask=buy_price,
                 shares=shares, size_usdc=round(size_usdc, 2),
                 mode="paper", order_id=result.order_id,
                 market_slug=market_slug,
@@ -446,19 +473,19 @@ class ClobClient:
             from py_clob_client_v2 import OrderArgs, Side, OrderType, PartialCreateOrderOptions
 
             if order_type.upper() == "FOK":
-                order_args = OrderArgs(token_id=token_id, price=price, side=Side.BUY, size=shares)
+                order_args = OrderArgs(token_id=token_id, price=buy_price, side=Side.BUY, size=shares)
                 signed_order = self._client.create_market_order(order_args)
                 if dry_run:
                     return self._dry_run_result(
-                        signed_order, "BUY", token_id, price, size_usdc, shares, "FOK", bracket_label, ts,
+                        signed_order, "BUY", token_id, buy_price, size_usdc, shares, "FOK", bracket_label, ts,
                     )
                 response = self._client.create_and_post_market_order(order_args=order_args)
             else:
-                order_args = OrderArgs(token_id=token_id, price=price, side=Side.BUY, size=shares)
+                order_args = OrderArgs(token_id=token_id, price=buy_price, side=Side.BUY, size=shares)
                 signed_order = self._client.create_order(order_args)
                 if dry_run:
                     return self._dry_run_result(
-                        signed_order, "BUY", token_id, price, size_usdc, shares, "GTC", bracket_label, ts,
+                        signed_order, "BUY", token_id, buy_price, size_usdc, shares, "GTC", bracket_label, ts,
                     )
                 response = self._client.create_and_post_order(
                     order_args=order_args,
@@ -516,7 +543,7 @@ class ClobClient:
                 success=_success, mode=TradingMode.REAL,
                 order_id=order_id, token_id=token_id,
                 side="BUY", outcome="YES",
-                price=round(price, 4), size_usdc=round(actual_size_usdc, 2),
+                price=buy_price, size_usdc=round(actual_size_usdc, 2),
                 shares=actual_shares, status=status, timestamp=ts,
                 simulated=False,
                 error=None if _success else f"Status: {status}",
@@ -533,7 +560,7 @@ class ClobClient:
         if result.success:
             self.positions.add(Position(
                 date_opened=ts[:10], bracket_label=bracket_label,
-                token_id=token_id, entry_ask=round(price, 4),
+                token_id=token_id, entry_ask=buy_price,
                 shares=actual_shares, size_usdc=round(actual_size_usdc, 2),
                 mode="real", order_id=result.order_id or "",
                 market_slug=market_slug,
@@ -552,23 +579,25 @@ class ClobClient:
             return OrderResult(success=False, mode=self.mode,
                                error=f"Posição já fechada ({position.status.value})", timestamp=ts)
 
-        pnl_usd = round((bid_price - position.entry_ask) * position.shares, 2)
-        pnl_pct = round((bid_price / position.entry_ask - 1) * 100, 2) if position.entry_ask else 0.0
+        sell_price = round_to_tick(bid_price, TICK_SIZE, "down")
+        gross_pnl = (sell_price - position.entry_ask) * position.shares
+        pnl_usd = round(gross_pnl - abs(gross_pnl) * TAKER_FEE_RATE, 2)
+        pnl_pct = round((sell_price / position.entry_ask - 1) * 100, 2) if position.entry_ask else 0.0
 
         # ── PAPER MODE ────────────────────────────────
         if self.mode == TradingMode.PAPER:
             position.status = PositionStatus.WON if pnl_usd >= 0 else PositionStatus.LOST
             position.pnl_usd = pnl_usd
             position.pnl_pct = pnl_pct
-            position.current_mid = bid_price
+            position.current_mid = sell_price
             position.last_updated = ts
             self.positions._save()
             return OrderResult(
                 success=True, mode=TradingMode.PAPER,
                 order_id=f"PAPER-SELL-{int(time.time())}",
                 token_id=position.token_id, side="SELL", outcome="YES",
-                price=round(bid_price, 4),
-                size_usdc=round(bid_price * position.shares, 2),
+                price=sell_price,
+                size_usdc=round(sell_price * position.shares, 2),
                 shares=position.shares, status="SIMULATED_SELL",
                 timestamp=ts, simulated=True,
             )
@@ -579,7 +608,7 @@ class ClobClient:
 
             order_args = OrderArgs(
                 token_id=position.token_id,
-                price=round(bid_price, 4),
+                price=sell_price,
                 size=position.shares,
                 side=Side.SELL,
             )
@@ -596,7 +625,7 @@ class ClobClient:
                 position.status = PositionStatus.WON if pnl_usd >= 0 else PositionStatus.LOST
                 position.pnl_usd = pnl_usd
                 position.pnl_pct = pnl_pct
-                position.current_mid = bid_price
+                position.current_mid = sell_price
                 position.last_updated = ts
                 self.positions._save()
 
@@ -604,8 +633,8 @@ class ClobClient:
                 success=success, mode=TradingMode.REAL,
                 order_id=order_id, token_id=position.token_id,
                 side="SELL", outcome="YES",
-                price=round(bid_price, 4),
-                size_usdc=round(bid_price * position.shares, 2),
+                price=sell_price,
+                size_usdc=round(sell_price * position.shares, 2),
                 shares=position.shares, status=status,
                 timestamp=ts, simulated=False,
                 error=None if success else f"Status: {status}",
@@ -825,21 +854,23 @@ class PositionManager:
         if pos.status != PositionStatus.OPEN:
             return False
 
-        peak_int = int(round(peak_temp))
+        peak_int = int(math.floor(peak_temp))
         if pos.temp_hi >= 99:
-            won = peak_int >= int(round(pos.temp_lo))
+            won = peak_int >= int(math.floor(pos.temp_lo))
         elif pos.temp_lo <= -99:
-            won = peak_int <= int(round(pos.temp_hi))
+            won = peak_int <= int(math.floor(pos.temp_hi))
         else:
-            won = int(round(pos.temp_lo)) <= peak_int <= int(round(pos.temp_hi))
+            won = int(math.floor(pos.temp_lo)) <= peak_int <= int(math.floor(pos.temp_hi))
 
         if won:
             pos.status = PositionStatus.WON
-            pos.pnl_usd = round((1.0 - pos.entry_ask) * pos.shares, 2)
+            gross = (1.0 - pos.entry_ask) * pos.shares
+            pos.pnl_usd = round(gross - abs(gross) * TAKER_FEE_RATE, 2)
             pos.pnl_pct = round((1.0 / pos.entry_ask - 1) * 100, 2) if pos.entry_ask else None
         else:
             pos.status = PositionStatus.LOST
-            pos.pnl_usd = round(-pos.size_usdc, 2)
+            gross = -pos.size_usdc
+            pos.pnl_usd = round(gross - abs(gross) * TAKER_FEE_RATE, 2)
             pos.pnl_pct = -100.0
 
         pos.current_mid = None

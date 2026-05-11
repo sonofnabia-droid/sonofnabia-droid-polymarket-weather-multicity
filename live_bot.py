@@ -24,7 +24,7 @@ from weather import (
     bootstrap_today, bootstrap_om_today, ceil_slot, is_plausible_temp,
 )
 from modules.strategy_factory import create_strategy
-from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus
+from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus, round_to_tick
 from zoneinfo import ZoneInfo
 
 # ── Month names para Polymarket slug (usado em todos os eventos)
@@ -300,6 +300,7 @@ class CityState:
     _last_date: Optional[date] = None
     _last_bankroll_hour: int = -1
     _settled_position_ids: set[str] = field(default_factory=set)
+    _bootstrap_pending: bool = True
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -377,6 +378,7 @@ def _bootstrap_state_today(state: CityState) -> None:
         int(s["hour"]): int(s.get("cloud_cover", 50))
         for s in state.slots_so_far
     }
+    state._bootstrap_pending = not bool(state.slots_so_far)
 
 
 def _settle_paper_positions_for_day(state: CityState, city_today: date) -> float:
@@ -421,13 +423,18 @@ def _get_tg():
     return _get_tg._instance
 
 
+def _tg_thread(fn, *args, **kwargs) -> None:
+    import threading
+    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
+
+
 def _tg_alert(msg: str) -> None:
     """Alerta genérico (texto livre) — fallback quando não há método dedicado."""
     print(f"[TG] {msg}")
     tg = _get_tg()
     if tg:
         try:
-            tg.send(msg)
+            _tg_thread(tg.send, msg)
         except Exception:
             pass
 
@@ -445,9 +452,9 @@ def _tg_alert_order_placed(bet_record: dict, trading_mode_str: str) -> None:
             if city_name and not label.startswith(f"[{city_name}]"):
                 bet_with_city = dict(bet_record)
                 bet_with_city["bracket_label"] = f"[{city_name}] {label}"
-                tg.alert_order_placed(bet_with_city, trading_mode_str)
+                _tg_thread(tg.alert_order_placed, bet_with_city, trading_mode_str)
             else:
-                tg.alert_order_placed(bet_record, trading_mode_str)
+                _tg_thread(tg.alert_order_placed, bet_record, trading_mode_str)
         except Exception as e:
             print(f"[TG] alert failed: {e}")
 
@@ -462,7 +469,8 @@ def _tg_alert_stop_loss_triggered(city_name: str, position: dict, current_temp: 
             pos_with_city["bracket_label"] = f"[{city_name}] " + str(
                 position.get("bracket_label", position.get("bracket", "?"))
             )
-            tg.alert_stop_loss_triggered(
+            _tg_thread(
+                tg.alert_stop_loss_triggered,
                 position=pos_with_city, current_temp=current_temp,
                 bid_price=bid_price, realized_pnl=realized_pnl,
             )
@@ -480,7 +488,8 @@ def _tg_alert_stop_loss_blocked(city_name: str, position: dict, current_temp: fl
             pos_with_city["bracket_label"] = f"[{city_name}] " + str(
                 position.get("bracket_label", position.get("bracket", "?"))
             )
-            tg.alert_stop_loss_blocked(
+            _tg_thread(
+                tg.alert_stop_loss_blocked,
                 position=pos_with_city, current_temp=current_temp, reason=reason,
             )
         except Exception as e:
@@ -513,7 +522,13 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
     # Em vez de: stats = DailyStats(date=city_today)
     stats = state.daily_stats  # ← Usar o objecto persistente
-    
+
+    if getattr(state, "_bootstrap_pending", False) and len(state.slots_so_far) < 4:
+        try:
+            _bootstrap_state_today(state)
+        except Exception:
+            state._bootstrap_pending = True
+
     # Fetch WU (se disponível)
     new_obs = None
     if city.wu_history_path:
@@ -715,10 +730,15 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 pass
 
         if _skip and _rec and state.entry:
-            state.entry.bought = True
-            state.entry.record = _rec
-            if hasattr(state.entry, 'strategy_used'):
-                state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
+            if hasattr(state.entry, "restore"):
+                state.entry.restore(_rec, state.strategy_mode)
+            else:
+                state.entry.bought = True
+                state.entry.record = _rec
+                if hasattr(state.entry, 'strategy_used'):
+                    state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
+            if hasattr(state.entry, "_stop_loss_blocked_alerted"):
+                state.entry._stop_loss_blocked_alerted = False
             print(f"  {C['yellow']}{city.name}: Posição existente detectada "
                   f"— a saltar entrada{R}")
 
@@ -747,6 +767,10 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         _wind_gust  = obs.get("wind_gust_kmh") if obs.get("wind_gust_kmh") is not None else last_slot.get("wind_gust_kmh", 8)
         _uv_index   = obs.get("uv_index") if obs.get("uv_index") is not None else last_slot.get("uv_index", 3)
 
+        prev7_value = compute_prev7(history_max_for_features, city_today, city.name)
+        if not history_max_for_features and state.slots_so_far:
+            prev7_value = max(float(s["temp_c"]) for s in state.slots_so_far)
+
         current_extra = {
             "hour": h_cur,
             "slot30": s30_cur,
@@ -759,7 +783,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             "wind_speed_kmh": _wind_speed,
             "wind_gust_kmh": _wind_gust,
             "uv_index": _uv_index,
-            "prev_7d_avg_max": compute_prev7(history_max_for_features, city_today, city.name),
+            "prev_7d_avg_max": prev7_value,
         }
 
         ensemble_result = predict_ensemble(
@@ -801,6 +825,18 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 size_usdc = action["size_usdc"]
                 token_id = bracket.get("token_id")
 
+                if token_id and state.clob:
+                    try:
+                        fresh_book = state.clob.get_orderbook(token_id)
+                        if fresh_book and getattr(fresh_book, "best_ask", None) is not None:
+                            ask = round_to_tick(float(fresh_book.best_ask), direction="up")
+                            bracket = dict(bracket)
+                            bracket["ask"] = ask
+                            if getattr(fresh_book, "best_bid", None) is not None:
+                                bracket["bid"] = round_to_tick(float(fresh_book.best_bid), direction="down")
+                    except Exception:
+                        pass
+
                 # bet_record completo (campos necessários para stop-loss + tracking)
                 bet_record = {
                     "city":          city.name,
@@ -839,6 +875,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         size_usdc=size_usdc,
                         bracket_label=bracket_lbl_full,
                         market_slug=market_slug,
+                        order_type="GTC",
                         temp_lo=bracket.get("temp_lo"),
                         temp_hi=bracket.get("temp_hi"),
                     )
@@ -866,6 +903,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         size_usdc=size_usdc,
                         bracket_label=bracket["label"],
                         market_slug=market_slug,
+                        order_type="GTC",
                         temp_lo=bracket.get("temp_lo"),
                         temp_hi=bracket.get("temp_hi"),
                     )

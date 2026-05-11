@@ -444,6 +444,12 @@ def bootstrap_om_today(city: CityConfig, session: requests.Session) -> tuple[dic
     t_vals = [r["temp_c"] for r in rows]
     print(f"{len(rows)} obs  {min(t_vals)}°C – {max(t_vals)}°C")
 
+    current_city_hour = datetime.now(tz=_get_city_timezone(city)).hour
+    rows = [r for r in rows if int(r.get("hour", 0)) <= current_city_hour]
+    if not rows:
+        print("sem dados OM passados")
+        return {}, []
+
     _bootstrap_rows_cache[city_name] = rows
 
     series:  dict[tuple, float] = {}
