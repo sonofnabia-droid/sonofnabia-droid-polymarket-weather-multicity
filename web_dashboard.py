@@ -96,6 +96,7 @@ def fallback_snapshot() -> dict:
             "local_hm": local_now.strftime("%H:%M"),
             "day_start": cfg.day_start,
             "day_end": cfg.day_end,
+            "has_wu": bool(cfg.wu_history_path),
             "threshold": cfg.threshold if cfg.threshold is not None else 0.65,
             "hour_min": cfg.hour_min if cfg.hour_min is not None else 14,
             "status": "Sem snapshot live",
@@ -122,6 +123,9 @@ def fallback_snapshot() -> dict:
             "stop_loss_hit": stats.get("total_invested", 0.0) >= cfg.max_daily_loss,
         })
 
+    initial_capital = 1000.0
+    bankroll = sum(c["bankroll"] for c in cities)
+    daily_pnl_total = sum(c["daily_pnl"] for c in cities)
     return {
         "generated_at": now.isoformat(),
         "trading_mode": "UNKNOWN",
@@ -131,9 +135,11 @@ def fallback_snapshot() -> dict:
             "n_bought": sum(1 for c in cities if c["bought"]),
             "n_signal": 0,
             "n_stop": sum(1 for c in cities if c["stop_loss_hit"]),
-            "daily_pnl": sum(c["daily_pnl"] for c in cities),
+            "daily_pnl": daily_pnl_total,
             "daily_trades": sum(c["n_trades"] for c in cities),
-            "bankroll": sum(c["bankroll"] for c in cities),
+            "bankroll": bankroll,
+            "initial_capital": initial_capital,
+            "current_capital": initial_capital + daily_pnl_total,
         },
         "cities": cities,
         "source": "fallback",
@@ -144,11 +150,36 @@ def get_snapshot() -> dict:
     snapshot = safe_read_json(SNAPSHOT_PATH, None)
     if not snapshot:
         return fallback_snapshot()
+    for city in snapshot.get("cities", []):
+        cfg = CITIES.get(city.get("name"))
+        if not cfg:
+            continue
+        city.setdefault("has_wu", bool(cfg.wu_history_path))
+        city.setdefault("label", label(cfg.name))
+        city.setdefault("flag", FLAGS.get(cfg.name, "🌍"))
+    summary = snapshot.setdefault("summary", {})
+    trading_mode = str(snapshot.get("trading_mode", "")).upper()
+    default_initial = 1000.0 if trading_mode == "PAPER" else summary.get("bankroll", 0.0)
+    initial_capital = summary.get("initial_capital", default_initial)
+    if trading_mode == "PAPER" and float(initial_capital or 0.0) != 1000.0:
+        initial_capital = 1000.0
+    daily_pnl = summary.get("daily_pnl", 0.0)
+    summary["initial_capital"] = initial_capital
+    summary["current_capital"] = float(initial_capital or 0.0) + float(daily_pnl or 0.0)
     snapshot["source"] = "live_snapshot"
     return snapshot
 
 
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/")

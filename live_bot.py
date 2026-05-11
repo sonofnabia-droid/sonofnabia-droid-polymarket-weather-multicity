@@ -992,6 +992,14 @@ def main():
         "start_time":   datetime.now(tz=ZoneInfo("Europe/Lisbon")),              # ← NOVO
     }                                                                            # ← NOVO
 
+    _tg_alert(
+        "🟡 <b>Live bot iniciado</b>\n"
+        f"  Modo: <b>{args.run.upper()}</b>\n"
+        f"  Estratégia: <b>{args.mode}</b>\n"
+        f"  Cidades: <b>{len(city_names)}</b> — {', '.join(city_names)}\n"
+        f"  Intervalo: <b>{args.interval}s</b>"
+    )
+
     # Daily stats por cidade — para passar ao dashboard                          # ← NOVO
     daily_stats: dict = {cn: None for cn in city_names}                         # ← NOVO
 

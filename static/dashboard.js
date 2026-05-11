@@ -5,18 +5,60 @@ const fmtMoney = (value) => {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}$`;
 };
 
+const fmtCapital = (value) => `$${Number(value || 0).toLocaleString("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})}`;
 const fmtTemp = (value) => value === null || value === undefined ? "—" : `${Number(value).toFixed(1)}°`;
 const fmtPct = (value) => `${Math.round(Number(value || 0) * 100)}%`;
+const fmtPrice = (value) => value === null || value === undefined ? "" : ` · ${Math.round(Number(value) * 100)}¢`;
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[ch]));
+
+function marketFavorite(city) {
+  const brackets = (city.market && city.market.brackets) || [];
+  return [...brackets].sort((a, b) => (b.ask || 0) - (a.ask || 0))[0] || {};
+}
+
+function isMarketResolved(city) {
+  if (city.bought) return false;
+  const fav = marketFavorite(city);
+  const favAsk = fav.ask ?? fav.price;
+  return favAsk !== null && favAsk !== undefined && Number(favAsk) >= 0.95;
+}
+
+function wuLabel(city) {
+  if (!city.has_wu) return "WU n/a";
+  return city.wu_forecast == null ? "WU —" : `WU ${Math.round(city.wu_forecast)}°`;
+}
+
+function omLabel(city) {
+  return city.om_forecast == null ? "OM —" : `OM ${Math.round(city.om_forecast)}°`;
+}
 
 function statusClass(city) {
   const s = String(city.status || "").toLowerCase();
   if (city.stop_loss_hit || s.includes("stop")) return "stop";
   if (city.bought || s.includes("comprado")) return "bought";
+  if (isMarketResolved(city)) return "resolved";
   if ((city.p_ensemble || 0) >= (city.threshold || 0.65) || s.includes("signal")) return "signal";
+  if (s.includes("monitor")) return "monitoring";
+  if (s.includes("aguarda") || s.includes("fora") || s.includes("sem snapshot")) return "idle";
   return "";
+}
+
+function cityGroup(city) {
+  const cls = statusClass(city);
+  if (cls === "stop" || cls === "bought") return "bought";
+  if (cls === "signal" || cls === "monitoring") return "monitoring";
+  return "idle";
+}
+
+function idleSortRank(city) {
+  const cls = statusClass(city);
+  if (cls === "resolved") return 1;
+  return 0;
 }
 
 function ageLabel(iso) {
@@ -50,9 +92,14 @@ function sparkline(slots) {
 
 function renderMetrics(data) {
   const summary = data.summary || {};
+  const capitalStart = Number(summary.initial_capital ?? summary.bankroll ?? 0);
+  const capitalNow = Number(summary.current_capital ?? (capitalStart + Number(summary.daily_pnl || 0)));
   document.getElementById("m-cities").textContent = summary.n_cities ?? "--";
   document.getElementById("m-signals").textContent = summary.n_signal ?? "--";
   document.getElementById("m-positions").textContent = summary.n_bought ?? "--";
+  document.getElementById("m-capital-start").textContent = capitalStart ? fmtCapital(capitalStart) : "--";
+  document.getElementById("m-capital-now").textContent = capitalNow ? fmtCapital(capitalNow) : "--";
+  document.getElementById("m-capital-now").className = capitalNow >= capitalStart ? "money-pos" : "money-neg";
   document.getElementById("m-pnl").textContent = fmtMoney(summary.daily_pnl);
   document.getElementById("m-pnl").className = Number(summary.daily_pnl || 0) >= 0 ? "money-pos" : "money-neg";
   document.getElementById("m-trades").textContent = summary.daily_trades ?? "--";
@@ -75,10 +122,10 @@ function cityCard(city, generatedAt) {
   const target = city.target_bracket || {};
   const ask = target.ask ?? target.price;
   const market = city.market || {};
-  const fc = [
-    city.wu_forecast !== null && city.wu_forecast !== undefined ? `WU ${city.wu_forecast}°` : null,
-    city.om_forecast !== null && city.om_forecast !== undefined ? `OM ${city.om_forecast}°` : null,
-  ].filter(Boolean).join(" · ") || "sem forecast";
+  const favorite = marketFavorite(city);
+  const favoriteAsk = favorite.ask ?? favorite.price;
+  const forecastState = city.forecast_agree === true ? "concordam" : city.forecast_agree === false ? "divergem" : "sem consenso";
+  const statusText = cls === "resolved" ? "✅ RESOLVIDO" : (city.status || "Monitor");
 
   return `
     <article class="city-card ${cls}${stale}">
@@ -90,13 +137,14 @@ function cityCard(city, generatedAt) {
             <span>${esc(city.local_hm || "--:--")} · ${esc(city.timezone || "")}</span>
           </div>
         </div>
-        <div class="status ${cls}">${esc(city.status || "Monitor")}</div>
+        <div class="status ${cls}">${esc(statusText)}</div>
       </div>
 
-      <div class="temps">
-        <div class="reading"><span>Temp</span><strong>${fmtTemp(city.temp)}</strong></div>
-        <div class="reading"><span>RMax</span><strong>${fmtTemp(city.running_max)}</strong></div>
-        <div class="reading"><span>Hum</span><strong>${city.humidity == null ? "—" : `${Math.round(city.humidity)}%`}</strong></div>
+      <div class="trade-readings overview">
+        <div class="reading primary"><span>Agora</span><strong>${fmtTemp(city.temp)}</strong></div>
+        <div class="reading"><span>WU</span><strong>${city.has_wu ? (city.wu_forecast == null ? "—" : `${Math.round(city.wu_forecast)}°`) : "n/a"}</strong></div>
+        <div class="reading"><span>Open-Meteo</span><strong>${city.om_forecast == null ? "—" : `${Math.round(city.om_forecast)}°`}</strong></div>
+        <div class="reading forecast-state"><span>Forecast</span><strong>${esc(forecastState)}</strong></div>
       </div>
 
       ${sparkline(city.slots)}
@@ -106,32 +154,44 @@ function cityCard(city, generatedAt) {
         <div class="bar"><div class="bar-fill ${fillClass}" style="width:${Math.min(100, p * 100)}%"></div></div>
         <strong>${fmtPct(p)}</strong>
       </div>
-      <div class="prob-row">
-        <span>Risk</span>
-        <div class="bar"><div class="bar-fill risk" style="width:${Math.min(100, ((city.daily_loss || 0) / Math.max(city.max_daily_loss || 1, 1)) * 100)}%"></div></div>
-        <strong>${Math.round(city.daily_loss || 0)}$</strong>
-      </div>
 
-      <div class="forecast">
-        <span>${esc(fc)}</span>
-        <span>${city.forecast_agree === true ? "concordam" : city.forecast_agree === false ? "divergem" : ""}</span>
-      </div>
-      <div class="market-mini">
-        <span class="target">${target.label ? esc(target.label) : "sem target"}${ask ? ` · ${Math.round(ask * 100)}¢` : ""}</span>
-        <span>${market.volume ? `$${Math.round(market.volume).toLocaleString("en-US")} vol` : "sem mercado"}</span>
+      <div class="market-box">
+        <div>
+          <span>Bracket do bot</span>
+          <strong>${target.label ? esc(target.label) : "—"}${fmtPrice(ask)}</strong>
+        </div>
+        <div>
+          <span>Favorito mercado</span>
+          <strong class="market-favorite">${favorite.label ? esc(favorite.label) : "—"}${fmtPrice(favoriteAsk)}</strong>
+        </div>
+        <div>
+          <span>Volume</span>
+          <strong>${market.volume ? `$${Math.round(market.volume).toLocaleString("en-US")}` : "—"}</strong>
+        </div>
       </div>
     </article>
   `;
 }
 
 function renderCities(data) {
-  const grid = document.getElementById("city-grid");
-  const cities = [...(data.cities || [])].sort((a, b) => {
-    const ca = statusClass(a), cb = statusClass(b);
-    const rank = { signal: 0, bought: 1, stop: 2, "": 3 };
-    return (rank[ca] ?? 9) - (rank[cb] ?? 9) || (b.p_ensemble || 0) - (a.p_ensemble || 0);
-  });
-  grid.innerHTML = cities.map(city => cityCard(city, data.generated_at)).join("");
+  const grouped = { idle: [], monitoring: [], bought: [] };
+  for (const city of data.cities || []) {
+    grouped[cityGroup(city)].push(city);
+  }
+  grouped.monitoring.sort((a, b) =>
+    ((b.p_ensemble || 0) - (b.threshold || 0.65)) - ((a.p_ensemble || 0) - (a.threshold || 0.65))
+  );
+  grouped.bought.sort((a, b) => (b.daily_pnl || 0) - (a.daily_pnl || 0));
+  grouped.idle.sort((a, b) => idleSortRank(a) - idleSortRank(b) || String(a.label).localeCompare(String(b.label)));
+
+  for (const key of ["idle", "monitoring", "bought"]) {
+    const lane = document.getElementById(`lane-${key}`);
+    const count = document.getElementById(`count-${key}`);
+    count.textContent = grouped[key].length;
+    lane.innerHTML = grouped[key].length
+      ? grouped[key].map(city => cityCard(city, data.generated_at)).join("")
+      : `<div class="empty lane-empty">Sem cidades neste estado.</div>`;
+  }
 }
 
 function collectPositions(cities) {
@@ -175,7 +235,7 @@ function renderPositions(data) {
 function renderMarkets(data) {
   const holder = document.getElementById("markets");
   const rows = (data.cities || [])
-    .filter(c => c.market && c.market.brackets && c.market.brackets.length)
+    .filter(c => c.market && c.market.brackets && c.market.brackets.length && !isMarketResolved(c))
     .sort((a, b) => (b.market.volume || 0) - (a.market.volume || 0))
     .slice(0, 10);
   if (!rows.length) {
@@ -183,16 +243,29 @@ function renderMarkets(data) {
     return;
   }
   holder.innerHTML = rows.map(city => {
-    const best = [...city.market.brackets].sort((a, b) => (b.ask || 0) - (a.ask || 0))[0] || {};
+    const best = marketFavorite(city);
+    const pRaw = Number(city.p_ensemble || 0);
+    const p = fmtPct(pRaw);
+    const fc = `${wuLabel(city)} · ${omLabel(city)}`;
     return `
       <div class="market-row">
         <div class="row-top">
           <span>${esc(city.flag)} ${esc(city.label)}</span>
-          <span class="accent">${best.ask ? `${Math.round(best.ask * 100)}¢` : "—"}</span>
+          <span class="market-favorite">${best.ask === null || best.ask === undefined ? "—" : `${Math.round(best.ask * 100)}¢`}</span>
         </div>
+        <div class="market-local-time">${esc(city.local_hm || "--:--")} · ${esc(city.timezone || "")}</div>
         <div class="row-sub">
           <span>${esc(best.label || "—")}</span>
           <span>${city.market.volume ? `$${Math.round(city.market.volume).toLocaleString("en-US")}` : "sem vol"}</span>
+        </div>
+        <div class="row-sub">
+          <span>${esc(fc)}</span>
+          <span></span>
+        </div>
+        <div class="mini-prob">
+          <span>P(pico)</span>
+          <div class="mini-bar"><div style="width:${Math.min(100, pRaw * 100)}%"></div></div>
+          <strong>${p}</strong>
         </div>
       </div>
     `;

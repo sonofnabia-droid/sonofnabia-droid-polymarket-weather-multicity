@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Polymarket Temp Bot</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v=20260511-dashboard-v4">
 </head>
 <body>
   <div class="shell">
@@ -32,6 +32,14 @@
         <span>Posições</span>
         <strong id="m-positions">--</strong>
       </article>
+      <article class="metric capital">
+        <span>Capital inicial</span>
+        <strong id="m-capital-start">--</strong>
+      </article>
+      <article class="metric capital">
+        <span>Capital atual</span>
+        <strong id="m-capital-now">--</strong>
+      </article>
       <article class="metric">
         <span>PnL dia</span>
         <strong id="m-pnl">--</strong>
@@ -52,7 +60,29 @@
           <h2>Cidades</h2>
           <div class="hint" id="source">--</div>
         </div>
-        <div id="city-grid" class="city-grid"></div>
+        <div id="city-grid" class="city-lanes">
+          <section class="city-lane idle">
+            <div class="lane-head">
+              <h3>Fora / Aguarda</h3>
+              <span id="count-idle">0</span>
+            </div>
+            <div id="lane-idle" class="lane-body"></div>
+          </section>
+          <section class="city-lane monitoring">
+            <div class="lane-head">
+              <h3>Monitorização / Sinais</h3>
+              <span id="count-monitoring">0</span>
+            </div>
+            <div id="lane-monitoring" class="lane-body"></div>
+          </section>
+          <section class="city-lane bought">
+            <div class="lane-head">
+              <h3>Com Posição</h3>
+              <span id="count-bought">0</span>
+            </div>
+            <div id="lane-bought" class="lane-body"></div>
+          </section>
+        </div>
       </section>
 
       <aside class="side">
@@ -75,6 +105,6 @@
     </main>
   </div>
 
-  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}?v=20260511-dashboard-v4"></script>
 </body>
 </html>

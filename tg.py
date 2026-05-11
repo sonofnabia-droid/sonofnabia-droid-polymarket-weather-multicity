@@ -23,6 +23,12 @@ import os
 import requests
 from datetime import datetime
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 
 class TG:
     """Wrapper para Telegram Bot API com alertas estruturados."""
@@ -48,8 +54,12 @@ class TG:
                       "disable_web_page_preview": True},
                 timeout=10,
             )
-            return r.status_code == 200
-        except Exception:
+            if r.status_code != 200:
+                print(f"  [TG] sendMessage falhou: HTTP {r.status_code} — {r.text[:200]}")
+                return False
+            return True
+        except Exception as e:
+            print(f"  [TG] sendMessage exception: {e}")
             return False
 
     # ══════════════════════════════════════════════════════

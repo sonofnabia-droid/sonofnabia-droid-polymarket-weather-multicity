@@ -22,7 +22,6 @@ Integração com live_bot.py (no fim do loop principal):
 
 import json
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
@@ -259,6 +258,44 @@ def _ask_color(ask: float) -> str:
     return "bold red"
 
 
+def _visible_market_brackets(cd: "CityDisplayData", limit: int = 6) -> list[dict]:
+    """Mostra sempre target + vizinhos, em vez dos primeiros brackets baixos."""
+    if not cd.market:
+        return []
+
+    brackets = list(cd.market.get("brackets", []))
+    if not brackets:
+        return []
+    if len(brackets) <= limit:
+        return brackets
+
+    target = cd.target_bracket
+    if not target:
+        return brackets[:limit]
+
+    target_idx = None
+    target_token = target.get("token_id")
+    target_label = target.get("label")
+    for i, b in enumerate(brackets):
+        if target_token and b.get("token_id") == target_token:
+            target_idx = i
+            break
+        if target_label and b.get("label") == target_label:
+            target_idx = i
+            break
+
+    if target_idx is None:
+        return brackets[:limit]
+
+    half = limit // 2
+    start = max(0, target_idx - half)
+    end = start + limit
+    if end > len(brackets):
+        end = len(brackets)
+        start = max(0, end - limit)
+    return brackets[start:end]
+
+
 def _city_status(cd: "CityDisplayData") -> tuple[str, str]:
     """(label, rich_style) de acordo com o estado da cidade."""
     city    = cd.city
@@ -281,13 +318,23 @@ def _city_status(cd: "CityDisplayData") -> tuple[str, str]:
     return "🔍 A MONITORIZAR",      "cyan"
 
 
-def _border_color(cd: "CityDisplayData") -> str:
+def _city_group(cd: "CityDisplayData") -> str:
     label, _ = _city_status(cd)
-    if "STOP"   in label: return "red"
-    if "COMPRA" in label: return "green"
-    if "SIGNAL" in label: return "yellow"
-    if "FORA"   in label or "AGUARDA" in label or "💤" in label: return "dim"
-    return "blue"
+    if cd.stop_loss_hit:
+        return "stopped"
+    if cd.bought:
+        return "bought"
+    if "FORA" in label or "AGUARDA" in label or "💤" in label:
+        return "idle"
+    return "monitoring"
+
+
+def _border_color(cd: "CityDisplayData") -> str:
+    group = _city_group(cd)
+    if group == "stopped": return "red"
+    if group == "bought": return "green"
+    if group == "monitoring": return "gold1"
+    return "dim"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -378,8 +425,8 @@ def _city_panel(cd: "CityDisplayData") -> Panel:
         n_br = cd.market.get("n_outcomes", 0)
         t.append(f" 📊 Vol ${vol:>8,.0f}   {n_br} brackets\n", style="dim")
 
-        # Top 3 brackets + highlight do target
-        brackets = cd.market.get("brackets", [])[:6]
+        # Target + vizinhos, para cidades quentes não esconderem o bracket alvo.
+        brackets = _visible_market_brackets(cd, limit=6)
         tgt_lbl  = cd.target_bracket.get("label", "") if cd.target_bracket else ""
 
         for b in brackets:
@@ -437,7 +484,63 @@ def _city_panel(cd: "CityDisplayData") -> Panel:
     # ── Título do painel
     title = Text(f" {_flag(city.name)} {_label(city.name).upper()} ")
 
-    return Panel(t, title=title, border_style=_border_color(cd), padding=(0, 1))
+    group = _city_group(cd)
+    panel_style = (
+        "on dark_green" if group == "bought" else
+        "on grey11" if group == "monitoring" else
+        "on grey7"
+    )
+
+    return Panel(
+        t,
+        title=title,
+        border_style=_border_color(cd),
+        padding=(0, 1),
+        style=panel_style,
+    )
+
+
+def _city_group_columns(city_data: list["CityDisplayData"]) -> Columns:
+    groups = {
+        "idle": [],
+        "monitoring": [],
+        "bought": [],
+    }
+    stopped = []
+    for cd in city_data:
+        group = _city_group(cd)
+        if group == "stopped":
+            stopped.append(cd)
+        elif group in groups:
+            groups[group].append(cd)
+        else:
+            groups["idle"].append(cd)
+
+    groups["monitoring"].sort(
+        key=lambda cd: cd.p_ensemble - (cd.city.threshold if cd.city.threshold is not None else 0.65),
+        reverse=True,
+    )
+    groups["bought"].sort(key=lambda cd: cd.daily_pnl, reverse=True)
+    groups["idle"].sort(key=lambda cd: cd.city.name)
+    if stopped:
+        groups["bought"] = stopped + groups["bought"]
+
+    specs = [
+        ("Fora de horas / aguarda", groups["idle"], "dim", "on grey7"),
+        ("Monitorização / sinais", groups["monitoring"], "gold1", "on grey11"),
+        ("Com posição", groups["bought"], "green", "on dark_green"),
+    ]
+    panels = []
+    for title, rows, border, style in specs:
+        body = Columns([_city_panel(cd) for cd in rows], equal=True, expand=True) if rows else Text(" sem cidades", style="dim")
+        panels.append(Panel(
+            body,
+            title=f"[bold {border}] {title} ({len(rows)}) [/bold {border}]",
+            border_style=border,
+            padding=(0, 1),
+            style=style,
+        ))
+    return Columns(panels, equal=True, expand=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -658,7 +761,8 @@ def _city_to_snapshot(cd: "CityDisplayData") -> dict:
     status_label, _ = _city_status(cd)
     brackets = []
     if cd.market:
-        for b in cd.market.get("brackets", [])[:12]:
+        visible = _visible_market_brackets(cd, limit=12)
+        for b in visible:
             brackets.append({
                 "label": b.get("label"),
                 "ask": b.get("ask") or b.get("price"),
@@ -677,6 +781,7 @@ def _city_to_snapshot(cd: "CityDisplayData") -> dict:
         "local_hm": city_dt.strftime("%H:%M"),
         "day_start": cd.city.day_start,
         "day_end": cd.city.day_end,
+        "has_wu": bool(cd.city.wu_history_path),
         "threshold": threshold,
         "hour_min": hour_min,
         "status": status_label,
@@ -719,6 +824,13 @@ def write_live_snapshot(
     LOG_DIR.mkdir(exist_ok=True)
     now = datetime.now(tz=ZoneInfo("Europe/Lisbon"))
     cities = [_city_to_snapshot(cd) for cd in city_data]
+    bankroll = sum(c.get("bankroll") or 0 for c in cities)
+    daily_pnl = sum(c.get("daily_pnl") or 0 for c in cities)
+    initial_capital = (
+        1000.0
+        if str(trading_mode_str).upper() == "PAPER"
+        else bankroll
+    )
     payload = {
         "generated_at": now.isoformat(),
         "trading_mode": trading_mode_str,
@@ -736,9 +848,11 @@ def write_live_snapshot(
                 and (c.get("p_ensemble") or 0) >= (c.get("threshold") or 0.65)
             ),
             "n_stop": sum(1 for c in cities if c.get("stop_loss_hit")),
-            "daily_pnl": sum(c.get("daily_pnl") or 0 for c in cities),
+            "daily_pnl": daily_pnl,
             "daily_trades": sum(c.get("n_trades") or 0 for c in cities),
-            "bankroll": sum(c.get("bankroll") or 0 for c in cities),
+            "bankroll": bankroll,
+            "initial_capital": initial_capital,
+            "current_capital": initial_capital + daily_pnl,
         },
         "cities": cities,
     }
@@ -817,19 +931,8 @@ def render_dashboard(
 
     _con.print(Panel(hdr, border_style="cyan", padding=(0, 1)))
 
-    # ── GRID DE PAINÉIS ────────────────────────────────────────────
-    try:
-        term_w = shutil.get_terminal_size().columns
-    except Exception:
-        term_w = 160
-
-    n_cols = (3 if term_w >= 200 else
-              2 if term_w >= 120 else 1)
-
-    panels = [_city_panel(cd) for cd in city_data]
-
-    for i in range(0, len(panels), n_cols):
-        _con.print(Columns(panels[i:i + n_cols], equal=True, expand=True))
+    # ── ESTADOS POR COLUNA ─────────────────────────────────────────
+    _con.print(_city_group_columns(city_data))
 
     # ── TABELA RESUMO COLECTIVA ────────────────────────────────────
     _con.print()
