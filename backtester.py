@@ -399,6 +399,33 @@ def _compute_sharpe_sortino(capital_history: list) -> tuple:
     return round(sharpe, 2), round(sortino, 2)
 
 
+def _compute_sharpe_sortino_from_day_records(day_records: list, mode: str) -> tuple:
+    """Sharpe/Sortino por retorno diário/trade, sem depender do capital clipado."""
+    if not day_records:
+        return 0.0, 0.0
+
+    df = pd.DataFrame(day_records)
+    pnl_col = f"{mode}_pnl"
+    invested_col = f"{mode}_invested"
+    if pnl_col not in df.columns or invested_col not in df.columns:
+        return 0.0, 0.0
+
+    trades = df[df[invested_col] > 0].copy()
+    if len(trades) < 2:
+        return 0.0, 0.0
+
+    rets = trades[pnl_col] / trades[invested_col].replace(0, np.nan)
+    rets = rets.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(rets) < 2 or rets.std() < 1e-8:
+        return 0.0, 0.0
+
+    ann = np.sqrt(365)
+    sharpe = float(rets.mean() / rets.std() * ann)
+    downside = rets[rets < 0]
+    sortino = float(rets.mean() / downside.std() * ann) if len(downside) > 1 and downside.std() > 1e-8 else 0.0
+    return round(sharpe, 2), round(sortino, 2)
+
+
 def _season_of(month: int) -> str:
     for s, months in SEASONS.items():
         if month in months:
@@ -658,8 +685,8 @@ def compute_stats(day_records: list, mode: str, capital_history: list) -> Backte
         total_pnl     = round(float(total_pnl), 2),
     )
 
-    # Sharpe/Sortino do capital global
-    sh, so = _compute_sharpe_sortino(capital_history)
+    # Sharpe/Sortino por retorno trade-a-trade
+    sh, so = _compute_sharpe_sortino_from_day_records(day_records, mode)
     stats.sharpe = sh
     stats.sortino = so
     if capital_history:
@@ -956,7 +983,7 @@ def print_dashboard(
 
     # ─── Sharpe/Sortino globais ───
     if capital_history and len(capital_history) >= 2:
-        sharpe, sortino = _compute_sharpe_sortino(capital_history)
+        sharpe, sortino = _compute_sharpe_sortino_from_day_records(day_records, "single")
         final_cap = capital_history[-1][1]
         total_return_pct = (final_cap / initial_capital - 1) * 100
         caps = [c for _, c in capital_history]
