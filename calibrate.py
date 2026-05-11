@@ -185,38 +185,34 @@ def simulate_strategy(signals_df: pd.DataFrame, city: CityConfig,
         peak_s = int(first["peak_slot30_day"])
         p_at_entry = float(first["p_ensemble"])
 
-        # Bracket alvo: comprar o bracket que contém o running_max arredondado
-        # Mantém paridade com backtester.py/live_bot.py.
-        if realistic_market and market_sim is not None:
-            brackets = market_sim.get_brackets(p_at_entry, entry_rmax, entry_h)
-            target_temp = int(round(entry_rmax))
+        # Bracket alvo: comprar o bracket que contém o running_max arredondado.
+        # A calibração deve usar sempre um mercado simulado consistente com o backtest.
+        market_sim = market_sim or SimulatedMarket(temp_range=city.temp_range, noise_std=0.08, seed=42)
+        brackets = market_sim.get_brackets(p_at_entry, entry_rmax, entry_h)
+        target_temp = int(round(entry_rmax))
 
-            best = None
-            for b in brackets:
-                lo, hi = b["temp_lo"], b["temp_hi"]
-                if hi >= 99 and target_temp >= lo:
-                    best = b
-                    break
-                if lo <= -99 and target_temp <= hi:
-                    best = b
-                    break
-                if lo <= target_temp <= hi:
-                    best = b
-                    break
+        best = None
+        for b in brackets:
+            lo, hi = b["temp_lo"], b["temp_hi"]
+            if hi >= 99 and target_temp >= lo:
+                best = b
+                break
+            if lo <= -99 and target_temp <= hi:
+                best = b
+                break
+            if lo <= target_temp <= hi:
+                best = b
+                break
 
-            if best is None:
-                best = min(
-                    brackets,
-                    key=lambda b: abs(((b["temp_lo"] + b["temp_hi"]) / 2) - target_temp)
-                )
+        if best is None:
+            best = min(
+                brackets,
+                key=lambda b: abs(((b["temp_lo"] + b["temp_hi"]) / 2) - target_temp)
+            )
 
-            bracket_lo = best["temp_lo"]
-            bracket_hi = best["temp_hi"]
-            ask = best["ask"]
-        else:
-            bracket_lo = round(entry_rmax)
-            bracket_hi = round(entry_rmax)
-            ask = max(0.05, min(0.95, p_at_entry))
+        bracket_lo = best["temp_lo"]
+        bracket_hi = best["temp_hi"]
+        ask = best["ask"]
 
         won = bracket_contains_peak(bracket_lo, bracket_hi, peak_temp)
 

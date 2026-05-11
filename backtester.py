@@ -202,7 +202,7 @@ class SimulatedMarket:
             # Liquidez zero em brackets muito afastados
             if dist > 5:
                 ask = 0.01
-                bid = 0.0
+                bid = 0.001
             else:
                 ask = float(np.clip(ask, 0.02, 0.97))
                 # Spread: mais apertado no bracket central, mais largo nas pontas

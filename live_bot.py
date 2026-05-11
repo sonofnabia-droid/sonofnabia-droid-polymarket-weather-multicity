@@ -71,10 +71,25 @@ class PolymarketFetcher:
 
         def _try(params):
             try:
-                r = requests.get(f"{GAMMA_API}/events", params=params, timeout=15)
-                r.raise_for_status()
-                ev = r.json()
-                return ev if isinstance(ev, list) else ([ev] if ev else [])
+                all_events = []
+                page = 1
+                while True:
+                    params_copy = dict(params)
+                    params_copy["limit"] = 100
+                    params_copy["offset"] = (page - 1) * 100
+                    r = requests.get(f"{GAMMA_API}/events", params=params_copy, timeout=15)
+                    r.raise_for_status()
+                    ev = r.json()
+                    if isinstance(ev, list):
+                        all_events.extend(ev)
+                        if len(ev) < 100:
+                            break
+                        page += 1
+                    else:
+                        if ev:
+                            all_events.append(ev)
+                        break
+                return all_events
             except Exception:
                 return []
 
@@ -169,8 +184,14 @@ class PolymarketFetcher:
     def _extract_temp(self, text: str) -> Optional[float]:
         """Extrai temperatura de um label."""
         import re
-        for pat in [r"([-]?\d+)\s*°?\s*[cC]\b", r"([-]?\d+)\s+or\s+(?:higher|lower|above|below)",
-                    r"be\s+([-]?\d+)", r"^\s*([-]?\d+)\s*$"]:
+        for pat in [
+            r"([-]?\d+)\s*°?\s*[cC]\b",
+            r"([-]?\d+)\s+or\s+(?:higher|lower|above|below)",
+            r"be\s+([-]?\d+)",
+            r"between\s+([-]?\d+)\s+and",
+            r"([-]?\d+)\s*[-–]\s*\d+",
+            r"^\s*([-]?\d+)\s*$",
+        ]:
             m = re.search(pat, str(text), re.IGNORECASE)
             if m:
                 return float(m.group(1))

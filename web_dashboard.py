@@ -10,17 +10,20 @@ importa nem controla o live_bot, por isso uma falha na web app não pára o bot.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, date
+from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, abort, jsonify, render_template, request
 
 from cities.config import CITIES
 
 
 LOG_DIR = Path("live_bot_logs")
 SNAPSHOT_PATH = LOG_DIR / "live_snapshot.json"
+API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip()
 
 FLAGS = {
     "munich": "🇩🇪", "dallas": "🇺🇸", "ankara": "🇹🇷",
@@ -117,7 +120,7 @@ def fallback_snapshot() -> dict:
             "n_trades": len(trades),
             "daily_loss": stats.get("total_invested", 0.0),
             "max_daily_loss": cfg.max_daily_loss,
-            "bankroll": cfg.max_per_trade * 100,
+            "bankroll": getattr(cfg, "max_per_trade", 5.0) * 100,
             "humidity": None,
             "cloud_cover": None,
             "stop_loss_hit": stats.get("total_invested", 0.0) >= cfg.max_daily_loss,
@@ -144,6 +147,16 @@ def fallback_snapshot() -> dict:
         "cities": cities,
         "source": "fallback",
     }
+
+
+def require_auth(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        if API_KEY and request.headers.get("X-API-Key") != API_KEY:
+            abort(401)
+        return view_func(*args, **kwargs)
+
+    return wrapper
 
 
 def get_snapshot() -> dict:
@@ -183,6 +196,7 @@ def add_no_cache_headers(response):
 
 
 @app.get("/")
+@require_auth
 def index():
     try:
         return render_template("dashboard.html")
@@ -191,11 +205,13 @@ def index():
 
 
 @app.get("/api/snapshot")
+@require_auth
 def api_snapshot():
     return jsonify(get_snapshot())
 
 
 @app.get("/health")
+@require_auth
 def health():
     snapshot = get_snapshot()
     return jsonify({

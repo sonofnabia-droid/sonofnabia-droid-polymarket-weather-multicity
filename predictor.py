@@ -83,6 +83,17 @@ def get_seasonal_prior(month: int, hour: int, slot30: int) -> float:
     return 0.5
 
 
+def _lookup_seasonal_prior(
+    month: int,
+    hour: int,
+    slot30: int,
+    prior_map: dict | None = None,
+) -> float:
+    if prior_map:
+        return prior_map.get((month, hour, slot30), 0.5)
+    return get_seasonal_prior(month, hour, slot30)
+
+
 # ══════════════════════════════════════════════════════
 # LOAD MODELS — LightGBM puro
 # ══════════════════════════════════════════════════════
@@ -186,7 +197,8 @@ def load_models(city: str = "munich", model_dir: Path | None = None) -> dict:
 # FEATURE BUILDER
 # ══════════════════════════════════════════════════════
 def build_features(slots_so_far: list[dict], current: dict,
-                   month: int, doy: int) -> dict:
+                   month: int, doy: int,
+                   seasonal_prior_map: dict | None = None) -> dict:
     """Constrói features canónicas + preditivas."""
     vals = [s["temp_c"] for s in slots_so_far]
     hums = [s.get("humidity", 70) for s in slots_so_far]
@@ -248,7 +260,7 @@ def build_features(slots_so_far: list[dict], current: dict,
         "radiation_proxy": radiation,
         "humidity_drop_1h": hum_drop_1h,
         "prev_7d_avg_max": prev7,
-        "seasonal_peak_prior": get_seasonal_prior(month, hour, slot30),
+        "seasonal_peak_prior": _lookup_seasonal_prior(month, hour, slot30, seasonal_prior_map),
         "dewpoint_c": dewpt,
         "temp_to_dewpoint_gap": temp_to_dewpoint_gap,
         "pressure_trend_3h": pressure_trend_3h,
@@ -285,12 +297,8 @@ def predict_ensemble(
             "components": {},
         }
 
-    # ← NOVO: Restaurar prior da cidade correcta (evita global stale em multi-cidade)
-    set_seasonal_prior(models.get("prior_map", {}))
-
-
     feat_cols = models["feat_cols"]
-    row = build_features(slots_so_far, current, month, doy)
+    row = build_features(slots_so_far, current, month, doy, models.get("prior_map", {}))
 
     X_array = np.array([[row.get(f, 0.0) for f in feat_cols]], dtype=np.float32)
 
