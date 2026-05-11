@@ -11,7 +11,8 @@ Interface pública compatível com munich_model.py:
 """
 
 import json
-from datetime import date, datetime
+import bisect
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -360,7 +361,9 @@ def compute_prev7(history: dict, d: date, city_name: str | None = None) -> float
     if not history:
         return climatology.get(d.month, 15.0)
     days = sorted(history.keys())
-    recent = [dd for dd in days if dd < d and (d - dd).days <= 7]
+    idx = bisect.bisect_left(days, d)
+    start = max(0, idx - 32)
+    recent = [dd for dd in days[start:idx] if (d - dd).days <= 7]
     if not recent:
         return climatology.get(d.month, 15.0)
     window = recent
@@ -430,6 +433,11 @@ def update_history_max(history: dict, slots_so_far: list[dict], city_name: str |
         return
     old_max = history.get(today)
     history[today] = max(history.get(today, -999.0), float(cur_max))
+
+    cutoff = today - timedelta(days=60)
+    stale_keys = [d for d in history.keys() if d < cutoff]
+    for d in stale_keys:
+        history.pop(d, None)
 
     # Só guardar em disco a cada 5 minutos ou se a máxima subiu
     import time

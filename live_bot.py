@@ -370,8 +370,8 @@ def _bootstrap_state_today(state: CityState) -> None:
         key=lambda s: int(s["hour"]) * 60 + int(s.get("slot30", 0)),
     )
     state.series_today = {
-        (int(s["hour"]), int(s.get("slot30", 0))): float(s["temp_c"])
-        for s in state.slots_so_far
+        (int(s["hour"]), int(s.get("slot30", 0)), idx): float(s["temp_c"])
+        for idx, s in enumerate(state.slots_so_far)
     }
     state.cloud_by_hour = {
         int(s["hour"]): int(s.get("cloud_cover", 50))
@@ -566,7 +566,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         h_slot, s30 = ceil_slot(h_obs, m_obs)
 
         if city.day_start <= h_slot <= city.day_end:
-            state.series_today[(h_slot, s30)] = new_obs["temp_c"]
+            same_slot_count = sum(
+                1 for s in state.slots_so_far
+                if s["hour"] == h_slot and s["slot30"] == s30
+            )
+            state.series_today[(h_slot, s30, same_slot_count)] = new_obs["temp_c"]
             if "cloud_cover" in new_obs and new_obs["cloud_cover"] is not None:
                 state.cloud_by_hour[h_slot] = new_obs["cloud_cover"]
 
@@ -635,8 +639,24 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         try:
             state.market = state.fetcher.fetch_market(city_today)
             if state.market and state.clob:
-                state.market["brackets"] = [state.clob.enrich_bracket(b)
-                                               for b in state.market["brackets"]]
+                running_max_ref = (
+                    max((s["temp_c"] for s in state.slots_so_far), default=15.0)
+                    if state.slots_so_far
+                    else (state.latest_obs.get("temp_c", 15.0) if state.latest_obs else 15.0)
+                )
+                rmax_floor = int(math.floor(running_max_ref))
+                enriched_brackets = []
+                for b in state.market["brackets"]:
+                    mid_temp = (float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2.0
+                    if (
+                        abs(mid_temp - rmax_floor) <= 3.0
+                        or float(b.get("temp_lo", 0.0)) <= -99.0
+                        or float(b.get("temp_hi", 0.0)) >= 99.0
+                    ):
+                        enriched_brackets.append(state.clob.enrich_bracket(b))
+                    else:
+                        enriched_brackets.append(b)
+                state.market["brackets"] = enriched_brackets
             state.last_market_min = market_key
         except Exception as e:
             print(f"  {C['yellow']}{city.name}: Fetch market failed: {e}{R}")
@@ -773,7 +793,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         # Processar ações (primeira que tenha size > 0)
         for action in actions:
             if action.get("size_usdc", 0) > 0:
-                bracket = action.get("bracket")
+                bracket = action.get("bracket") or state.last_target_bracket
                 if not bracket:
                     continue
 
@@ -877,9 +897,21 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 # Throttle: só alertar 1× por trigger (evita spam)
                 _already_alerted = getattr(state.entry, '_stop_loss_blocked_alerted', False)
 
-                matching = [b for b in state.market.get("brackets", [])
-                            if b.get("temp_lo") == pos.get("temp_lo")
-                            and b.get("temp_hi") == pos.get("temp_hi")]
+                matching = []
+                pos_token = pos.get("token_id")
+                if pos_token:
+                    matching = [
+                        b for b in state.market.get("brackets", [])
+                        if b.get("token_id") == pos_token
+                    ]
+                if not matching:
+                    pos_lo = float(pos.get("temp_lo", 0))
+                    pos_hi = float(pos.get("temp_hi", 0))
+                    matching = [
+                        b for b in state.market.get("brackets", [])
+                        if abs(float(b.get("temp_lo", 0)) - pos_lo) < 0.1
+                        and abs(float(b.get("temp_hi", 0)) - pos_hi) < 0.1
+                    ]
 
                 # ── Caso 1: bracket desapareceu do mercado ──
                 if not matching:
