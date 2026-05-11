@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box as rich_box
 from predictor import set_city, build_features, set_seasonal_prior, compute_prev7
+from weather import ceil_slot
 
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, build_features, set_seasonal_prior
@@ -63,12 +64,6 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
     if "hour" not in df.columns and "timestamp_utc" in df.columns:
         from datetime import timedelta
         from zoneinfo import ZoneInfo
-
-        def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
-            if minute < 30:
-                return (hour, 30)
-            else:
-                return (hour + 1, 0)
 
         city_tz = ZoneInfo(city.timezone)
 

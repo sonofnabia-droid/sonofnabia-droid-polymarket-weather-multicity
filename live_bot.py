@@ -20,7 +20,7 @@ from predictor import set_city, load_models, predict_ensemble, compute_prev7, in
 from weather import (
     make_wu_session, make_om_session, fetch_wu_latest,
     fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
-    bootstrap_today, bootstrap_om_today,
+    bootstrap_today, bootstrap_om_today, ceil_slot,
 )
 from modules.strategy_factory import create_strategy
 from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus
@@ -314,16 +314,6 @@ def city_date(city: CityConfig) -> date:
 
 def bot_now() -> datetime:
     return datetime.now(tz=ZoneInfo("Europe/Lisbon"))
-
-
-def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
-    """Converte (hour, minute) para slot 30min (truncar para CIMA)."""
-    if minute < 30:
-        return (hour, 30)
-    h = hour + 1
-    if h == 24:
-        return (23, 30)
-    return (h, 0)
 
 
 def _save_daily_stats(stats: DailyStats, city_name: str) -> None:

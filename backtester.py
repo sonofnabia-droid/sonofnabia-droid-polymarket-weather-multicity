@@ -44,6 +44,7 @@ from rich import box as rich_box
 
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, predict_ensemble
+from weather import ceil_slot
 from modules.single_entry import SingleEntry
 
 _console = Console(force_terminal=True)
@@ -56,16 +57,6 @@ SEASONS = {
     "winter": [12, 1, 2], "spring": [3, 4, 5],
     "summer": [6, 7, 8],  "autumn": [9, 10, 11],
 }
-
-
-def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
-    """Converte (hour, minute) para slot 30min (truncar para CIMA)."""
-    if minute < 30:
-        return (hour, 30)
-    h = hour + 1
-    if h == 24:
-        return (23, 30)
-    return (h, 0)
 
 
 # ══════════════════════════════════════════════════════
