@@ -368,17 +368,12 @@ def compute_prev7(history: dict, d: date, city_name: str | None = None) -> float
     if not history:
         return climatology.get(d.month, 15.0)
     days = sorted(history.keys())
-    if d not in days:
-        recent = [dd for dd in days if dd < d and (d - dd).days <= 7]
-        if recent:
-            return float(np.mean([history[x] for x in recent]))
+    recent = [dd for dd in days if dd < d and (d - dd).days <= 7]
+    if not recent:
         return climatology.get(d.month, 15.0)
-    idx = days.index(d)
-    if idx == 0:
-        return climatology.get(d.month, float(history[d]))
-    window = [dd for dd in days[:idx] if (d - dd).days <= 7]
+    window = recent
     vals = [history[x] for x in window]
-    return float(np.mean(vals)) if vals else climatology.get(d.month, float(history[d]))
+    return float(np.mean(vals)) if vals else climatology.get(d.month, 15.0)
 
 
 # ══════════════════════════════════════════════════════
