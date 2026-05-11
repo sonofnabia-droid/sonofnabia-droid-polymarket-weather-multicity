@@ -1048,7 +1048,7 @@ def main():
     parser.add_argument("--end", type=str, help="Data fim (YYYY-MM-DD)")
     parser.add_argument("--ordertype", choices=["fixed","percent"], default="fixed")
     parser.add_argument("--bet", type=float, default=5.0,
-                        help="$ absoluto se fixed, % do capital se percent")
+                        help="$ absoluto se fixed, %% do capital se percent")
     parser.add_argument("--noise", type=float, default=0.05,
                         help="Ruído gaussiano no ask do mercado simulado (default 0.05 = 5¢). "
                              "0.0 = determinístico.")
