@@ -148,7 +148,18 @@ def fetch_wu_day(city: CityConfig, day: date,
         r.raise_for_status()
         obs = r.json().get("observations", [])
         city_tz = _get_city_timezone(city)
-        return _wu_parse_obs(obs, city_tz) if obs else []
+        rows = _wu_parse_obs(obs, city_tz) if obs else []
+        if rows and city.climatology:
+            clim_max = max(city.climatology.values())
+            sanity_limit = clim_max + 50.0
+            if any(row.get("temp_c", 0.0) > sanity_limit for row in rows):
+                print(
+                    f"  [WU] invalid temperature scale for {city.name}: "
+                    f"max_temp={max(row.get('temp_c', 0.0) for row in rows):.1f} "
+                    f"sanity_limit={sanity_limit:.1f}"
+                )
+                return []
+        return rows
     except Exception:
         return []
 

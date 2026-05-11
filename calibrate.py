@@ -20,6 +20,7 @@ Métricas (--metric):
 """
 
 import argparse
+import math
 from datetime import date, timedelta
 from pathlib import Path
 import warnings
@@ -194,7 +195,7 @@ def simulate_strategy(signals_df: pd.DataFrame, city: CityConfig,
         # A calibração deve usar sempre um mercado simulado consistente com o backtest.
         market_sim = market_sim or SimulatedMarket(temp_range=city.temp_range, noise_std=0.08, seed=42)
         brackets = market_sim.get_brackets(p_at_entry, entry_rmax, entry_h)
-        target_temp = int(round(entry_rmax))
+        target_temp = int(math.floor(entry_rmax))
 
         best = None
         for b in brackets:
@@ -1002,14 +1003,14 @@ def main():
             f"  • Métrica: <b>OUTCOME</b> (win-rate puro, sem inventar preços)\n"
             f"  • outcome_score = win_pct × log10(1 + trades/ano)\n"
             f"  • Recompensa qualidade do sinal SEM enviesar por SimulatedMarket\n"
-            f"  • Bracket alvo = round(running_max)\n"
+            f"  • Bracket alvo = floor(running_max)\n"
             f"  • Lag positivo = entrou antes do pico; zero = no pico; negativo = depois[/dim]"
         )
     else:
         notes = (
             "\n[dim]Notas finais:\n"
             f"  • Métrica: <b>ROI $</b> (depende de SimulatedMarket — preços inventados)\n"
-            f"  • Bracket alvo = round(running_max)\n"
+            f"  • Bracket alvo = floor(running_max)\n"
             f"  • Lag positivo = entrou antes do pico; zero = no pico; negativo = depois\n"
             f"  • {'Preços REALISTAS (SimulatedMarket climatológico com ruído 5¢)' if args.realistic else 'Preços por proxy (ask ≈ p_ensemble)'}\n"
             f"  • Para métrica honesta sem ROI inventado, usar: --metric outcome[/dim]"

@@ -9,6 +9,7 @@ Uso:
 """
 
 import argparse
+import math
 import json
 import time
 from dataclasses import dataclass, field
@@ -229,9 +230,9 @@ class PolymarketFetcher:
         if not market:
             return None
         if forecast_max is not None:
-            target = int(round(forecast_max))
+            target = int(math.floor(forecast_max))
         else:
-            target = int(round(temp))
+            target = int(math.floor(temp))
 
         for b in market["brackets"]:
             lo, hi = b["temp_lo"], b["temp_hi"]
@@ -628,7 +629,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 existing_bets = json.loads(bets_path.read_text())
                 existing_bets = [
                     b for b in existing_bets
-                    if b.get("market_slug", current_market_slug) == current_market_slug
+                    if b.get("market_slug") is not None
+                    and b.get("market_slug") == current_market_slug
                 ]
                 if existing_bets:
                     _skip = True

@@ -21,6 +21,7 @@ Uso:
 """
 
 import argparse
+import math
 import json
 import warnings
 from dataclasses import dataclass, field
@@ -162,7 +163,7 @@ class SimulatedMarket:
         if np.isnan(running_max) or np.isinf(running_max):
             running_max = 15.0
         brackets = []
-        rmax_int = int(round(running_max))
+        rmax_int = int(math.floor(running_max))
 
         for temp in self.temp_range:
             signed_dist = temp - rmax_int    # positivo se bracket acima do rmax
@@ -472,7 +473,11 @@ def run_backtest(
             peak_sidx = _slot_idx(peak_h, peak_s)
 
             if ordertype == "percent":
-                bet_size = max(5.0, min(500.0, capital * (bet_value / 100.0)))
+                desired_bet = capital * (bet_value / 100.0)
+                if capital < 5.0:
+                    bet_size = 0.0
+                else:
+                    bet_size = max(5.0, min(500.0, desired_bet))
             else:
                 bet_size = bet_value
 
@@ -523,8 +528,8 @@ def run_backtest(
                 # SINGLE — 1 compra por sessão
                 for act in entry_single.evaluate(p_ens, h, market_sim, running_max, fc_agreement):
                     if act.get("size_usdc", 0) > 0:
-                        # Estratégia real: apostar no bracket que contém round(running_max)
-                        target_temp = int(round(running_max))
+                        # Estratégia real: apostar no bracket que contém floor(running_max)
+                        target_temp = int(math.floor(running_max))
                         best = None
                         for b in brackets:
                             if b["temp_lo"] <= target_temp <= b["temp_hi"]:
