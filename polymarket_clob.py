@@ -469,6 +469,44 @@ class ClobClient:
             order_id = response.get("orderID") or response.get("id") or "?"
             status = response.get("status", "unknown")
 
+            def _coerce_float(value):
+                try:
+                    if value is None:
+                        return None
+                    return float(value)
+                except Exception:
+                    return None
+
+            filled_shares = None
+            filled_size_usdc = None
+            for key in (
+                "filledShares", "filled_shares", "sizeFilled", "size_filled",
+                "filledSize", "filled_size", "filledAmount", "filled_amount",
+            ):
+                if key not in response:
+                    continue
+                val = _coerce_float(response.get(key))
+                if val is None:
+                    continue
+                if "share" in key.lower():
+                    filled_shares = val
+                else:
+                    filled_size_usdc = val
+
+            if filled_shares is None and filled_size_usdc is not None and price > 0:
+                filled_shares = filled_size_usdc / price
+            if filled_size_usdc is None and filled_shares is not None:
+                filled_size_usdc = filled_shares * price
+
+            actual_shares = filled_shares if filled_shares is not None else shares
+            actual_size_usdc = filled_size_usdc if filled_size_usdc is not None else size_usdc
+            if status == "live" and filled_shares is None and filled_size_usdc is None:
+                logger.warning(
+                    "Ordem LIVE sem metadados de fill; a registar tamanho solicitado "
+                    "como fallback (order_id=%s, token_id=%s)",
+                    order_id, token_id,
+                )
+
             if order_type.upper() == "FOK":
                 _success = status == "matched"
             else:
@@ -478,8 +516,8 @@ class ClobClient:
                 success=_success, mode=TradingMode.REAL,
                 order_id=order_id, token_id=token_id,
                 side="BUY", outcome="YES",
-                price=round(price, 4), size_usdc=round(size_usdc, 2),
-                shares=shares, status=status, timestamp=ts,
+                price=round(price, 4), size_usdc=round(actual_size_usdc, 2),
+                shares=actual_shares, status=status, timestamp=ts,
                 simulated=False,
                 error=None if _success else f"Status: {status}",
             )
@@ -496,7 +534,7 @@ class ClobClient:
             self.positions.add(Position(
                 date_opened=ts[:10], bracket_label=bracket_label,
                 token_id=token_id, entry_ask=round(price, 4),
-                shares=shares, size_usdc=round(size_usdc, 2),
+                shares=actual_shares, size_usdc=round(actual_size_usdc, 2),
                 mode="real", order_id=result.order_id or "",
                 market_slug=market_slug,
                 temp_lo=float(temp_lo) if temp_lo is not None else 0.0,
@@ -712,7 +750,10 @@ class PositionManager:
 
     def _save(self):
         try:
-            self._path.write_text(json.dumps([p.to_dict() for p in self._positions], indent=2))
+            data = json.dumps([p.to_dict() for p in self._positions], indent=2)
+            tmp_path = self._path.with_name(self._path.name + ".tmp")
+            tmp_path.write_text(data)
+            os.replace(tmp_path, self._path)
         except Exception:
             pass
 

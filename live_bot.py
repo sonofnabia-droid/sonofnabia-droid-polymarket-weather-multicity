@@ -21,7 +21,7 @@ from predictor import set_city, load_models, predict_ensemble, compute_prev7, in
 from weather import (
     make_wu_session, make_om_session, fetch_wu_latest,
     fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
-    bootstrap_today, bootstrap_om_today, ceil_slot,
+    bootstrap_today, bootstrap_om_today, ceil_slot, is_plausible_temp,
 )
 from modules.strategy_factory import create_strategy
 from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus
@@ -533,6 +533,13 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             print(f"  {C['yellow']}OM fetch failed: {e}{R}")
 
     state.latest_obs = new_obs
+    if new_obs and not is_plausible_temp(new_obs.get("temp_c"), city):
+        print(
+            f"  {C['red']}{city.name}: rejected implausible temp "
+            f"{new_obs.get('temp_c')}°C{R}"
+        )
+        new_obs = None
+        state.latest_obs = None
 
     # Forecasts apenas informativos para dashboard/alertas; não entram na decisão.
     h_forecast = city_now(city).hour
@@ -580,8 +587,26 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
             exists = any(s["hour"] == h_slot and s["slot30"] == s30 for s in state.slots_so_far)
             if exists:
+                current_rmax = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else None
+                latest_slot_key = max(
+                    (int(s["hour"]) * 60 + int(s.get("slot30", 0)) for s in state.slots_so_far),
+                    default=None,
+                )
+                new_slot_key = h_slot * 60 + s30
                 for s in state.slots_so_far:
                     if s["hour"] == h_slot and s["slot30"] == s30:
+                        if (
+                            state.entry and state.entry.bought
+                            and latest_slot_key is not None
+                            and new_slot_key < latest_slot_key
+                            and current_rmax is not None
+                            and slot_entry["temp_c"] > current_rmax
+                        ):
+                            print(
+                                f"  {C['yellow']}{city.name}: clamped late high temp "
+                                f"at {h_slot:02d}:{s30:02d}{R}"
+                            )
+                            slot_entry["temp_c"] = s["temp_c"]
                         s["date"] = city_today
                         s["temp_c"] = slot_entry["temp_c"]
                         if "hour" in slot_entry:

@@ -38,6 +38,25 @@ _bootstrap_rows_cache: dict[str, list[dict]] = {}
 _bootstrap_obs_min:    dict[str, dict]       = {}
 
 
+def is_plausible_temp(temp_c: float | None, city: CityConfig) -> bool:
+    """Filtro conservador para glitches absurdos de temperatura."""
+    if temp_c is None:
+        return False
+    try:
+        temp = float(temp_c)
+    except Exception:
+        return False
+    if temp != temp or temp in (float("inf"), float("-inf")):
+        return False
+
+    if city.climatology:
+        historic_max = max(city.climatology.values()) + 25.0
+        historic_min = min(city.climatology.values()) - 25.0
+        return historic_min <= temp <= historic_max
+
+    return -40.0 <= temp <= 60.0
+
+
 def _get_city_timezone(city: CityConfig) -> ZoneInfo:
     """Retorna ZoneInfo da cidade."""
     return ZoneInfo(city.timezone)
@@ -125,8 +144,8 @@ def _wu_parse_obs(obs_list: list, city_tz: ZoneInfo) -> list[dict]:
             "dewpoint_c":     float(obs.get("dewpt") or (temp_c - 10)),
             "pressure_hpa":   float(obs.get("pressure") or 1013),
             "wind_dir_deg":   float(obs.get("wdir") or 0),
-            "wind_speed_kmh": float(obs.get("wspd") or 5) if obs.get("wspd") else 5.0,
-            "wind_gust_kmh":  float(obs.get("gust") or 8) if obs.get("gust") else 8.0,
+            "wind_speed_kmh": float(obs.get("wspd")) if obs.get("wspd") is not None else 5.0,
+            "wind_gust_kmh":  float(obs.get("gust")) if obs.get("gust") is not None else 8.0,
             "uv_index":       float(obs.get("uv_index") or 3),
         })
     return rows

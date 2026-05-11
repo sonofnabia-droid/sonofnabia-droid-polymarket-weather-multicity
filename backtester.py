@@ -45,7 +45,7 @@ from rich import box as rich_box
 
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, predict_ensemble
-from weather import ceil_slot
+from weather import ceil_slot, is_plausible_temp
 from modules.single_entry import SingleEntry
 
 _console = Console(force_terminal=True)
@@ -162,10 +162,14 @@ class SimulatedMarket:
     def get_brackets(self, p_ensemble: float, running_max: float, hour: int) -> list[dict]:
         if np.isnan(running_max) or np.isinf(running_max):
             running_max = 15.0
-        brackets = []
         rmax_int = int(math.floor(running_max))
+        candidate_temps = {self.temp_range[0], self.temp_range[-1]}
+        for temp in range(rmax_int - 4, rmax_int + 5):
+            if temp in self.temp_range:
+                candidate_temps.add(temp)
 
-        for temp in self.temp_range:
+        brackets = []
+        for temp in sorted(candidate_temps):
             signed_dist = temp - rmax_int    # positivo se bracket acima do rmax
             dist = abs(signed_dist)
             temp_below_rmax = signed_dist < 0
@@ -307,8 +311,10 @@ def load_data(csv_path: Path, city: CityConfig) -> pd.DataFrame:
     raw["wind_speed_kmh"] = _coalesce_col(["wind_speed_kmh", "wind_speed_10m", "windspeed_10m"], 5.0)
     raw["wind_gust_kmh"]  = _coalesce_col(["wind_gust_kmh", "wind_gusts_10m", "windgusts_10m"], 8.0)
     raw["uv_index"]       = _coalesce_col(["uv_index"], 3.0)
+    plausible_mask = raw["temp_c"].apply(lambda v: is_plausible_temp(v, city))
 
     df = raw[
+        plausible_mask &
         (raw["hour"] >= city.day_start) & (raw["hour"] <= city.day_end)
     ].dropna(subset=["temp_c"]).sort_values(
         ["date", "hour", "slot30"]
