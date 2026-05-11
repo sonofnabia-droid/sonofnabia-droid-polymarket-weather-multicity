@@ -893,7 +893,7 @@ def render_dashboard(
 
     write_live_snapshot(city_data, trading_mode_str, session_stats)
 
-    os.system("clear" if os.name != "nt" else "cls")
+    _con.clear()
 
     lisbon_now  = datetime.now(tz=ZoneInfo("Europe/Lisbon"))
     lisbon_str  = lisbon_now.strftime("%H:%M:%S")

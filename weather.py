@@ -378,6 +378,7 @@ def bootstrap_today(city: CityConfig, api_key: str,
                 if k not in seen:
                     seen.add(k)
                     slots.append({
+                        "date":           today,
                         "hour":           k[0],
                         "slot30":         k[1],
                         "temp_c":         r["temp_c"],
@@ -432,6 +433,7 @@ def bootstrap_om_today(city: CityConfig, session: requests.Session) -> tuple[dic
         if k not in seen:
             seen.add(k)
             slots.append({
+                "date":           today,
                 "hour":           k[0],
                 "slot30":         k[1],
                 "temp_c":         r["temp_c"],

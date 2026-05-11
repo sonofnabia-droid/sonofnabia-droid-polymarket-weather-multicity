@@ -559,9 +559,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
         if city.day_start <= h_slot <= city.day_end:
             state.series_today[(h_slot, s30)] = new_obs["temp_c"]
-            state.cloud_by_hour[h_slot] = new_obs.get("cloud_cover", 50)
+            if "cloud_cover" in new_obs and new_obs["cloud_cover"] is not None:
+                state.cloud_by_hour[h_slot] = new_obs["cloud_cover"]
 
             slot_entry = {
+                "date": city_today,
                 "hour": h_slot,
                 "slot30": s30,
                 "temp_c": new_obs["temp_c"],
@@ -579,13 +581,25 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             if exists:
                 for s in state.slots_so_far:
                     if s["hour"] == h_slot and s["slot30"] == s30:
-                        s.update(slot_entry)
+                        s["date"] = city_today
+                        s["temp_c"] = slot_entry["temp_c"]
+                        if "hour" in slot_entry:
+                            s["hour"] = slot_entry["hour"]
+                        if "slot30" in slot_entry:
+                            s["slot30"] = slot_entry["slot30"]
+                        for key in (
+                            "cloud_cover", "humidity", "dewpoint_c", "pressure_hpa",
+                            "wind_dir_deg", "wind_speed_kmh", "wind_gust_kmh", "uv_index",
+                        ):
+                            if key in new_obs and new_obs[key] is not None:
+                                s[key] = slot_entry[key]
                         break
             else:
                 state.slots_so_far.append(slot_entry)
                 state.slots_so_far.sort(key=lambda x: x["hour"] * 60 + x["slot30"])
 
     from predictor import update_history_max, init_history_max
+    history_max_for_features = dict(state.history_max)
     update_history_max(state.history_max, state.slots_so_far, city.name)
 
     # Fetch market (a cada 10 minutos ou se não existe)
@@ -698,7 +712,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             "wind_speed_kmh": _wind_speed,
             "wind_gust_kmh": _wind_gust,
             "uv_index": _uv_index,
-            "prev_7d_avg_max": compute_prev7(state.history_max, city_today, city.name),
+            "prev_7d_avg_max": compute_prev7(history_max_for_features, city_today, city.name),
         }
 
         ensemble_result = predict_ensemble(

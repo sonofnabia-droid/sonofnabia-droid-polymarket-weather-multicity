@@ -44,18 +44,23 @@ _console = Console()
 # ══════════════════════════════════════════════════════
 def bracket_contains_peak(lo: float, hi: float, peak: float) -> bool:
     """Verifica se o bracket contém o pico real (paridade com backtester.py)."""
-    peak_int = int(round(peak))
     if hi >= 99:
-        return peak_int >= int(round(lo))
+        return peak >= lo
     if lo <= -99:
-        return peak_int <= int(round(hi))
-    return int(round(lo)) <= peak_int <= int(round(hi))
+        return peak <= hi
+    return lo <= peak < (hi + 1.0)
 
-def pnl_per_dollar(ask: float, won: bool) -> float:
-    """PnL por $ investido: (1/ask - 1) se ganha, -1.0 se perde."""
+def pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
+    """PnL absoluto para shares inteiras, consistente com o backtester."""
+    if not ask or ask <= 0:
+        return 0.0
+    shares = int(size_usdc // ask)
+    if shares <= 0:
+        return 0.0
+    invested = shares * ask
     if won:
-        return (1.0 / ask) - 1.0
-    return -1.0
+        return float(shares) - invested
+    return -invested
 
 
 # ══════════════════════════════════════════════════════
@@ -216,7 +221,7 @@ def simulate_strategy(signals_df: pd.DataFrame, city: CityConfig,
 
         won = bracket_contains_peak(bracket_lo, bracket_hi, peak_temp)
 
-        pnl = PARCEL * pnl_per_dollar(ask, won)
+        pnl = pnl_per_dollar(ask, won, PARCEL)
 
         total_invested += PARCEL
         total_pnl += pnl
@@ -259,9 +264,12 @@ def simulate_strategy(signals_df: pd.DataFrame, city: CityConfig,
         "avg_winning_ask": float(np.mean(winning_asks)) if winning_asks else 0,
         "avg_losing_ask": float(np.mean(losing_asks)) if losing_asks else 0,
         # outcome_score — independente de preços simulados
-        "outcome_score": (wins / trades * 100 *
-                          np.log10(1 + (trades / total_days * 365 if total_days else 0))
-                          if trades > 0 else 0),
+        "outcome_score": (
+            wins / trades * 100 *
+            np.log10(1 + (trades / total_days * 365 if total_days else 0)) *
+            min(1.0, total_days / 365.0)
+            if trades > 0 else 0
+        ),
     }
 
 

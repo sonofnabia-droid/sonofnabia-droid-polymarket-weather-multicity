@@ -172,17 +172,7 @@ class SimulatedMarket:
             # 1. Baseline climatológica (DOMINA o preço)
             climatological = self._climatological_ask(dist, hour, temp_below_rmax)
 
-            # 2. Nudge pelo modelo (pequeno — máx ±5¢ de efeito)
-            # O modelo só influencia o bracket central e vizinhos próximos.
-            # Nudge: quando p_ensemble é alta, o trader "concorda" e puxa o preço
-            # para cima; quando é baixa, puxa para baixo. Mas nunca muito.
-            if dist <= 1 and not temp_below_rmax:
-                # Centrado em 0.5; desvio de p_ensemble vs 0.5 multiplicado por 0.10
-                model_nudge = (p_ensemble - 0.5) * 0.10
-            else:
-                model_nudge = 0.0
-
-            ask = climatological + model_nudge
+            ask = climatological
 
             # 3. Ruído gaussiano independente do modelo
             if self.noise_std > 0:
@@ -354,18 +344,23 @@ def _slot_idx(h: int, s: int) -> int:
 
 
 def _bracket_contains_peak(temp_lo: float, temp_hi: float, peak_temp: float) -> bool:
-    peak_int = int(round(peak_temp))
     if temp_hi >= 99:
-        return peak_int >= int(round(temp_lo))
+        return peak_temp >= temp_lo
     if temp_lo <= -99:
-        return peak_int <= int(round(temp_hi))
-    return int(round(temp_lo)) <= peak_int <= int(round(temp_hi))
+        return peak_temp <= temp_hi
+    return temp_lo <= peak_temp < (temp_hi + 1.0)
 
 
-def _pnl_per_dollar(ask: float, won: bool) -> float:
+def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
     if not ask or ask <= 0:
-        return -1.0 if not won else 0.0
-    return (1.0 / ask) - 1.0 if won else -1.0
+        return 0.0
+    shares = math.floor(size_usdc / ask)
+    if shares <= 0:
+        return 0.0
+    actual_invested = shares * ask
+    if won:
+        return float(shares) - actual_invested
+    return -actual_invested
 
 
 def _compute_sharpe_sortino(capital_history: list) -> tuple:
@@ -564,13 +559,14 @@ def run_backtest(
                     else:
                         sell_bid = 0.02  # liquidez zero
 
-                    # PnL realizado: vendemos ao bid, depois de ter comprado ao ask
-                    entry_ask = pos["ask"]
-                    shares = pos["size_usdc"] / entry_ask if entry_ask > 0 else 0
-                    sell_value = shares * sell_bid
-                    realized_pnl = sell_value - pos["size_usdc"]
+                        # PnL realizado: vendemos ao bid depois de comprar shares inteiras
+                        entry_ask = pos["ask"]
+                        shares = math.floor(pos["size_usdc"] / entry_ask) if entry_ask > 0 else 0
+                        invested = shares * entry_ask
+                        sell_value = shares * sell_bid
+                        realized_pnl = sell_value - invested
 
-                    entry_single.mark_sold_by_stop(sell_bid, realized_pnl)
+                        entry_single.mark_sold_by_stop(sell_bid, realized_pnl)
 
             # ── Avaliação fim-de-dia ──
             # SINGLE
@@ -584,7 +580,7 @@ def run_backtest(
                 if entry_single.sold_by_stop and "realized_pnl" in rec:
                     single_pnl = rec["realized_pnl"]
                 else:
-                    single_pnl = rec["size_usdc"] * _pnl_per_dollar(rec["ask"], single_won)
+                    single_pnl = _pnl_per_dollar(rec["ask"], single_won, rec["size_usdc"])
 
                 lag_slots = peak_sidx - _slot_idx(rec["hour"], rec["slot30"])
                 single_lag_h = lag_slots * 0.5
