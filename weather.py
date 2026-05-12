@@ -371,7 +371,7 @@ def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
 
 
 def bootstrap_today(city: CityConfig, api_key: str,
-                   session: requests.Session) -> tuple[dict, list[dict]]:
+                   session: requests.Session, verbose: bool = True) -> tuple[dict, list[dict]]:
     """
     Carrega observações de hoje (WU se disponível, senão Open-Meteo).
     Retorna (series_dict, slots_list).
@@ -383,11 +383,13 @@ def bootstrap_today(city: CityConfig, api_key: str,
 
     # Tenta WU primeiro se disponível
     if city.wu_history_path:
-        print(f"  WU {city.icao} histórico {today}...", end=" ", flush=True)
+        if verbose:
+            print(f"  WU {city.icao} histórico {today}...", end=" ", flush=True)
         rows = fetch_wu_day(city, today, api_key, session)
         if rows:
             t_vals = [r["temp_c"] for r in rows]
-            print(f"{len(rows)} obs  {min(t_vals)}°C – {max(t_vals)}°C")
+            if verbose:
+                print(f"{len(rows)} obs  {min(t_vals)}°C – {max(t_vals)}°C")
 
             _bootstrap_rows_cache[city_name] = rows
 
@@ -425,29 +427,33 @@ def bootstrap_today(city: CityConfig, api_key: str,
             return series, slots
 
     # Fallback para Open-Meteo
-    return bootstrap_om_today(city, session)
+    return bootstrap_om_today(city, session, verbose=verbose)
 
 
-def bootstrap_om_today(city: CityConfig, session: requests.Session) -> tuple[dict, list[dict]]:
+def bootstrap_om_today(city: CityConfig, session: requests.Session, verbose: bool = True) -> tuple[dict, list[dict]]:
     """Bootstrap com dados horários do Open-Meteo."""
     global _bootstrap_rows_cache, _bootstrap_obs_min
 
     today = _city_date(city)
     city_name = city.name
 
-    print(f"  Open-Meteo hourly {today}...", end=" ", flush=True)
+    if verbose:
+        print(f"  Open-Meteo hourly {today}...", end=" ", flush=True)
     rows = fetch_om_hourly_today(city, session)
     if not rows:
-        print("sem dados OM")
+        if verbose:
+            print("sem dados OM")
         return {}, []
 
     t_vals = [r["temp_c"] for r in rows]
-    print(f"{len(rows)} obs  {min(t_vals)}°C – {max(t_vals)}°C")
+    if verbose:
+        print(f"{len(rows)} obs  {min(t_vals)}°C – {max(t_vals)}°C")
 
     current_city_hour = datetime.now(tz=_get_city_timezone(city)).hour
     rows = [r for r in rows if int(r.get("hour", 0)) <= current_city_hour]
     if not rows:
-        print("sem dados OM passados")
+        if verbose:
+            print("sem dados OM passados")
         return {}, []
 
     _bootstrap_rows_cache[city_name] = rows

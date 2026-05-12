@@ -43,7 +43,8 @@ try:
 except ImportError:
     _HAS_CLOB = False
 
-_con = Console()
+# Forçar modo terminal/interativo para ambientes onde Rich não deteta TTY corretamente.
+_con = Console(force_terminal=True, force_interactive=True)
 LOG_DIR = Path("live_bot_logs")
 SNAPSHOT_PATH = LOG_DIR / "live_snapshot.json"
 

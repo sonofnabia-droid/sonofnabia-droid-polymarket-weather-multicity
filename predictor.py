@@ -12,6 +12,7 @@ Interface pública compatível com munich_model.py:
 
 import json
 import bisect
+import warnings
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -24,6 +25,13 @@ from cities.config import CityConfig, get_city
 
 LOG_DIR = Path("live_bot_logs")
 LOG_DIR.mkdir(exist_ok=True)
+
+# Evita spam do sklearn quando passamos ndarray ao predict_proba.
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names, but LGBMClassifier was fitted with feature names",
+    category=UserWarning,
+)
 
 
 # ══════════════════════════════════════════════════════

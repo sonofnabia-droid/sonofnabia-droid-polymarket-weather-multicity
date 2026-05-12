@@ -12,6 +12,7 @@ import argparse
 import math
 import json
 import time
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -301,6 +302,7 @@ class CityState:
     _last_bankroll_hour: int = -1
     _settled_position_ids: set[str] = field(default_factory=set)
     _bootstrap_pending: bool = True
+    dashboard_enabled: bool = False
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -350,15 +352,23 @@ def _bootstrap_state_today(state: CityState) -> None:
 
     try:
         if city.wu_history_path:
-            series, slots = bootstrap_today(city, state.wu_key, state.wu_sess)
+            series, slots = bootstrap_today(
+                city, state.wu_key, state.wu_sess, verbose=not state.dashboard_enabled
+            )
             if len(slots) < 4:
                 print(f"  {C['yellow']}{city.name}: WU com poucos dados, fallback OM{R}")
-                series, slots = bootstrap_om_today(city, state.om_sess)
+                series, slots = bootstrap_om_today(
+                    city, state.om_sess, verbose=not state.dashboard_enabled
+                )
         else:
-            series, slots = bootstrap_om_today(city, state.om_sess)
+            series, slots = bootstrap_om_today(
+                city, state.om_sess, verbose=not state.dashboard_enabled
+            )
     except Exception as e:
         print(f"  {C['yellow']}{city.name}: bootstrap falhou, usando OM: {e}{R}")
-        series, slots = bootstrap_om_today(city, state.om_sess)
+        series, slots = bootstrap_om_today(
+            city, state.om_sess, verbose=not state.dashboard_enabled
+        )
 
     filtered_slots = [
         s for s in slots
@@ -824,18 +834,34 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 ask = bracket.get("ask") or bracket.get("price", 1.0)
                 size_usdc = action["size_usdc"]
                 token_id = bracket.get("token_id")
+                raw_best_ask = None
 
                 if token_id and state.clob:
                     try:
                         fresh_book = state.clob.get_orderbook(token_id)
                         if fresh_book and getattr(fresh_book, "best_ask", None) is not None:
-                            ask = round_to_tick(float(fresh_book.best_ask), direction="up")
+                            raw_best_ask = float(fresh_book.best_ask)
+                            ask = round_to_tick(raw_best_ask, direction="up")
                             bracket = dict(bracket)
                             bracket["ask"] = ask
+                            bracket["raw_ask"] = raw_best_ask
                             if getattr(fresh_book, "best_bid", None) is not None:
                                 bracket["bid"] = round_to_tick(float(fresh_book.best_bid), direction="down")
                     except Exception:
                         pass
+
+                min_buy_ask = getattr(state.entry, "min_buy_ask", 0.20)
+                effective_ask = raw_best_ask if raw_best_ask is not None else float(ask)
+                if effective_ask < min_buy_ask:
+                    print(
+                        f"  {C['yellow']}{city.name.upper()} BUY BLOQUEADO: "
+                        f"ask {effective_ask*100:.1f}¢ < mínimo {min_buy_ask*100:.0f}¢{R}"
+                    )
+                    _tg_alert(
+                        f"🚫 <b>{city.name.title()}</b> buy bloqueado: "
+                        f"ask {effective_ask*100:.1f}¢ < mínimo {min_buy_ask*100:.0f}¢"
+                    )
+                    break
 
                 # bet_record completo (campos necessários para stop-loss + tracking)
                 bet_record = {
@@ -851,9 +877,13 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     "temp_lo":       bracket.get("temp_lo"),
                     "temp_hi":       bracket.get("temp_hi"),
                     "token_id":      token_id,
+                    "raw_ask":       raw_best_ask,
                     "time":          city_now(city).isoformat(),
                     "timestamp":     city_now(city).isoformat(),
                     "strategy":      action.get("strategy") or state.strategy_mode,
+                    "p_ensemble":    p_ensemble,
+                    "p_lgbm":        ensemble_result.get("p_lgbm") if ensemble_result else None,
+                    "running_max":   running_max,
                 }
                 bet_record["market_slug"] = current_market_slug
 
@@ -1036,8 +1066,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                     state.entry._stop_loss_blocked_alerted = True
     # ───────────────────────────────────────────────────────
 
-    # Display simples
-    if state.latest_obs:
+    # Display simples (apenas quando dashboard multi-cidade não está ativa)
+    if state.latest_obs and not state.dashboard_enabled:
         rmax = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else state.latest_obs["temp_c"]
 
         print(f"{C['cyan']}{city.name.upper():<8}{R} "
@@ -1066,15 +1096,23 @@ def main():
                         help="Modo de execução: paper, real")
     parser.add_argument("--interval", type=int, default=30,
                         help="Intervalo em segundos entre ticks")
+    parser.add_argument("--no-dashboard", action="store_true",
+                        help="Desativa dashboard rich (útil para logs/daemon)")
+    parser.add_argument("--force-dashboard", action="store_true",
+                        help="Força dashboard rich mesmo se stdout não parecer TTY")
     args = parser.parse_args()
 
-    city_names   = [c.strip() for c in args.cities.split(",")]
+    raw_city_names = [c.strip() for c in args.cities.split(",") if c.strip()]
+    # Evita cidades duplicadas (ex: "...,karachi,...,karachi") mantendo ordem.
+    city_names = list(dict.fromkeys(raw_city_names))
     trading_mode = TradingMode.REAL if args.run == "real" else TradingMode.PAPER
-    is_multi     = len(city_names) > 1                                           # ← NOVO
+    is_multi     = len(city_names) > 1
+    has_tty = sys.stdout.isatty()
+    dashboard_enabled = is_multi and (not args.no_dashboard)
 
-    # Import dashboard multi-cidade apenas se necessário                          # ← NOVO
-    if is_multi:                                                                  # ← NOVO
-        from display import extract_display_data, render_dashboard               # ← NOVO
+    # Import dashboard multi-cidade apenas se necessário
+    if is_multi:
+        from display import extract_display_data, render_dashboard, write_live_snapshot
 
     print("=" * 60)
     print(f" {B}Live Bot — Multi-Cidade{R}")
@@ -1083,7 +1121,15 @@ def main():
     print(f"  Modo:     {args.mode}")
     print(f"  Execução: {args.run.upper()}")
     print(f"  Intervalo:{args.interval}s")
-    print(f"  Dashboard:{'multi-cidade (display.py)' if is_multi else 'mono-cidade (legacy)'}")  # ← NOVO
+    if dashboard_enabled:
+        dash_label = "multi-cidade (display.py)"
+    elif is_multi and not has_tty:
+        dash_label = "desativada (stdout sem TTY)"
+    elif is_multi and args.no_dashboard:
+        dash_label = "desativada (--no-dashboard)"
+    else:
+        dash_label = "mono-cidade (legacy)"
+    print(f"  Dashboard:{dash_label}")
     print()
 
     # Inicializar estados por cidade
@@ -1094,6 +1140,11 @@ def main():
         models = load_models(city_name)
 
         entry = create_strategy(city, mode=args.mode, parcel_size=PARCEL_SIZE)
+        print(
+            f"  {city.name}: estratégia carregada "
+            f"(threshold={getattr(entry, 'threshold', 'n/a')}, "
+            f"hour_min={getattr(entry, 'hour_min', 'n/a')})"
+        )
 
         state = CityState(
             city=city,
@@ -1103,6 +1154,7 @@ def main():
             fetcher=PolymarketFetcher(city),
             history_max=init_history_max(city_name),  # ← carregar do disco
             daily_stats=DailyStats(date=city_date(city)),  # ← NOVO
+            dashboard_enabled=dashboard_enabled,
         )
 
         import os
@@ -1176,6 +1228,35 @@ def main():
     session_pnl_cumulative = {cn: 0.0 for cn in city_names}
     session_last_reported_pnl = {cn: 0.0 for cn in city_names}
     session_last_dates = {cn: None for cn in city_names}
+
+    if is_multi:
+        try:
+            initial_display = []
+            for cn in city_names:
+                cd = extract_display_data(
+                    states[cn],
+                    daily_stats=daily_stats.get(cn),
+                    bankroll=city_bankrolls.get(cn, default_bankroll),
+                )
+                cd.p_ensemble = getattr(states[cn], "last_p_ensemble", 0.0)
+                cd.p_lgbm = getattr(states[cn], "last_p_lgbm", None)
+                cd.target_bracket = getattr(states[cn], "last_target_bracket", None)
+                initial_display.append(cd)
+
+            # Escreve snapshot logo no arranque (web não fica parcial/stale).
+            write_live_snapshot(
+                initial_display,
+                trading_mode_str=args.run.upper(),
+                session_stats=session_stats,
+            )
+            if dashboard_enabled:
+                render_dashboard(
+                    initial_display,
+                    trading_mode_str=args.run.upper(),
+                    session_stats=session_stats,
+                )
+        except Exception as e:
+            print(f"  {C['red']}Dashboard/snapshot init error: {e}{R}")
 
     try:
         while True:
@@ -1269,28 +1350,36 @@ def main():
                     print(f"  {C['red']}{city.name}: Tick failed: {e}{R}")
 
             # ── DISPLAY ──────────────────────────────────────────────────────
-            if is_multi:                                                          # ← NOVO
-                try:                                                              # ← NOVO
-                    cities_display = []                                           # ← NOVO
-                    for cn in city_names:                                         # ← NOVO
-                        cd = extract_display_data(                               # ← NOVO
-                            states[cn],                                          # ← NOVO
-                            daily_stats=daily_stats.get(cn),                    # ← NOVO
-                            bankroll=city_bankrolls.get(cn, default_bankroll),  # ← NOVO
-                        )                                                        # ← NOVO
-                        # p_ensemble e target_bracket guardados pelo _tick_city  # ← NOVO
-                        cd.p_ensemble     = getattr(states[cn], "last_p_ensemble",    0.0)   # ← NOVO
-                        cd.p_lgbm         = getattr(states[cn], "last_p_lgbm",        None)  # ← NOVO
-                        cd.target_bracket = getattr(states[cn], "last_target_bracket", None) # ← NOVO
-                        cities_display.append(cd)                                # ← NOVO
-                                                                                 # ← NOVO
-                    render_dashboard(                                             # ← NOVO
-                        cities_display,                                          # ← NOVO
-                        trading_mode_str=args.run.upper(),                       # ← NOVO
-                        session_stats=session_stats,                             # ← NOVO
-                    )                                                            # ← NOVO
-                except Exception as e:                                            # ← NOVO
-                    print(f"  {C['red']}Dashboard error: {e}{R}")               # ← NOVO
+            if is_multi:
+                try:
+                    cities_display = []
+                    for cn in city_names:
+                        cd = extract_display_data(
+                            states[cn],
+                            daily_stats=daily_stats.get(cn),
+                            bankroll=city_bankrolls.get(cn, default_bankroll),
+                        )
+                        # p_ensemble e target_bracket guardados pelo _tick_city
+                        cd.p_ensemble = getattr(states[cn], "last_p_ensemble", 0.0)
+                        cd.p_lgbm = getattr(states[cn], "last_p_lgbm", None)
+                        cd.target_bracket = getattr(states[cn], "last_target_bracket", None)
+                        cities_display.append(cd)
+
+                    # Snapshot web sempre atualizado, mesmo sem render Rich.
+                    write_live_snapshot(
+                        cities_display,
+                        trading_mode_str=args.run.upper(),
+                        session_stats=session_stats,
+                    )
+
+                    if dashboard_enabled:
+                        render_dashboard(
+                            cities_display,
+                            trading_mode_str=args.run.upper(),
+                            session_stats=session_stats,
+                        )
+                except Exception as e:
+                    print(f"  {C['red']}Dashboard/snapshot error: {e}{R}")
             # ── single-city: _tick_city já faz os seus próprios prints ─────
 
             time.sleep(args.interval)

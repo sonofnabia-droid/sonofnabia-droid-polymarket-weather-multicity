@@ -20,6 +20,8 @@ Variáveis de ambiente:
 """
 from __future__ import annotations
 import json, logging, os, math, time, sys
+import io
+import contextlib
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -32,6 +34,11 @@ TICK_SIZE = 0.01
 MIN_SIZE = 5.0
 FEE_RATE = 0.0
 TAKER_FEE_RATE = float(os.environ.get("POLY_TAKER_FEE_RATE", "0.02"))
+
+# Reduz ruído de libs externas no terminal live (ex: 404 "No orderbook exists").
+logging.getLogger("py_clob_client_v2").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
 
 
 def round_to_tick(price: float, tick_size: float = TICK_SIZE, direction: str = "nearest") -> float:
@@ -315,7 +322,10 @@ class ClobClient:
         if not token_id or self._client is None:
             return None
         try:
-            book_raw = self._client.get_order_book(token_id)
+            # py_clob_client_v2 por vezes escreve 404 diretamente em stderr.
+            # Silenciamos apenas esta chamada para não poluir a dashboard.
+            with contextlib.redirect_stderr(io.StringIO()):
+                book_raw = self._client.get_order_book(token_id)
             book = self._orderbook_from_payload(token_id, book_raw)
             if book is not None:
                 return book
