@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Polymarket Temp Bot</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v=20260511-dashboard-v4">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}?v=20260514-dashboard-v17">
 </head>
 <body>
   <div class="shell">
@@ -55,56 +55,40 @@
     </section>
 
     <main class="layout">
-      <section>
-        <div class="section-head">
-          <h2>Cidades</h2>
-          <div class="hint" id="source">--</div>
-        </div>
-        <div id="city-grid" class="city-lanes">
-          <section class="city-lane idle">
-            <div class="lane-head">
-              <h3>Fora / Aguarda</h3>
-              <span id="count-idle">0</span>
-            </div>
-            <div id="lane-idle" class="lane-body"></div>
-          </section>
-          <section class="city-lane monitoring">
-            <div class="lane-head">
-              <h3>Monitorização / Sinais</h3>
-              <span id="count-monitoring">0</span>
-            </div>
-            <div id="lane-monitoring" class="lane-body"></div>
-          </section>
-          <section class="city-lane bought">
-            <div class="lane-head">
-              <h3>Com Posição</h3>
-              <span id="count-bought">0</span>
-            </div>
-            <div id="lane-bought" class="lane-body"></div>
-          </section>
-        </div>
-      </section>
-
-      <aside class="side">
-        <section class="panel">
+      <aside class="left-side">
+        <section class="panel watch-panel">
+          <div class="section-head compact">
+            <h2>Cidades</h2>
+            <span id="watch-count" class="hint">0</span>
+          </div>
+          <div id="watchlist" class="markets"></div>
+        </section>
+        <section class="panel positions-panel">
           <div class="section-head compact">
             <h2>Posições</h2>
             <span id="position-count" class="hint">0</span>
           </div>
           <div id="positions" class="positions"></div>
         </section>
-
-        <section class="panel">
-          <div class="section-head compact">
-            <h2>Mercados Ativos</h2>
-            <span class="hint">top asks</span>
-          </div>
-          <div id="markets" class="markets"></div>
-        </section>
       </aside>
+
+      <section class="right-side">
+        <section class="panel detail-panel">
+          <div class="section-head">
+            <h2>Cidade Selecionada</h2>
+            <div class="hint" id="source">--</div>
+          </div>
+          <div class="section-head compact">
+            <span id="selected-city" class="hint">Nenhuma</span>
+          </div>
+          <div id="city-detail" class="city-detail">
+            <div class="empty">Seleciona uma cidade na coluna “Cidades”.</div>
+          </div>
+        </section>
+      </section>
     </main>
   </div>
 
-  <script src="{{ url_for('static', filename='dashboard.js') }}?v=20260511-dashboard-v4"></script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}?v=20260514-dashboard-v17"></script>
 </body>
 </html>

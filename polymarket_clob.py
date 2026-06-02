@@ -22,6 +22,7 @@ from __future__ import annotations
 import json, logging, os, math, time, sys
 import io
 import contextlib
+from trade_ledger import append_event, make_position_id
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -39,6 +40,16 @@ TAKER_FEE_RATE = float(os.environ.get("POLY_TAKER_FEE_RATE", "0.02"))
 logging.getLogger("py_clob_client_v2").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("httpcore").setLevel(logging.ERROR)
+
+
+def _city_from_slug(market_slug: str) -> str:
+    if not market_slug:
+        return ""
+    prefix = market_slug.split("-on-")[0]
+    marker = "-in-"
+    if marker in prefix:
+        return prefix.split(marker, 1)[1]
+    return prefix
 
 
 def round_to_tick(price: float, tick_size: float = TICK_SIZE, direction: str = "nearest") -> float:
@@ -459,6 +470,10 @@ class ClobClient:
 
         # ── PAPER MODE ────────────────────────────────
         if self.mode == TradingMode.PAPER:
+            position_id = make_position_id(
+                ts[:10], market_slug.split("-on-")[0] if market_slug else "unknown",
+                token_id, f"PAPER-{int(time.time())}", market_slug
+            )
             result = OrderResult(
                 success=True, mode=TradingMode.PAPER,
                 order_id=f"PAPER-{int(time.time())}",
@@ -468,7 +483,8 @@ class ClobClient:
             )
             self._log_order(result, bracket_label)
             self.positions.add(Position(
-                date_opened=ts[:10], bracket_label=bracket_label,
+                position_id=position_id,
+                date_opened=ts[:10], opened_at=ts, bracket_label=bracket_label,
                 token_id=token_id, entry_ask=buy_price,
                 shares=shares, size_usdc=round(size_usdc, 2),
                 mode="paper", order_id=result.order_id,
@@ -476,6 +492,19 @@ class ClobClient:
                 temp_lo=float(temp_lo) if temp_lo is not None else 0.0,
                 temp_hi=float(temp_hi) if temp_hi is not None else 0.0,
             ))
+            append_event({
+                "event_type": "BET_OPEN",
+                "position_id": position_id,
+                "city": _city_from_slug(market_slug),
+                "market_slug": market_slug,
+                "token_id": token_id,
+                "order_id": result.order_id,
+                "opened_at": ts,
+                "entry_ask": buy_price,
+                "shares": shares,
+                "size_usdc": round(size_usdc, 2),
+                "mode": "paper",
+            })
             return result
 
         # ── REAL MODE ─────────────────────────────────
@@ -568,8 +597,13 @@ class ClobClient:
 
         self._log_order(result, bracket_label)
         if result.success:
+            position_id = make_position_id(
+                ts[:10], market_slug.split("-on-")[0] if market_slug else "unknown",
+                token_id, result.order_id or "", market_slug
+            )
             self.positions.add(Position(
-                date_opened=ts[:10], bracket_label=bracket_label,
+                position_id=position_id,
+                date_opened=ts[:10], opened_at=ts, bracket_label=bracket_label,
                 token_id=token_id, entry_ask=buy_price,
                 shares=actual_shares, size_usdc=round(actual_size_usdc, 2),
                 mode="real", order_id=result.order_id or "",
@@ -577,6 +611,19 @@ class ClobClient:
                 temp_lo=float(temp_lo) if temp_lo is not None else 0.0,
                 temp_hi=float(temp_hi) if temp_hi is not None else 0.0,
             ))
+            append_event({
+                "event_type": "BET_OPEN",
+                "position_id": position_id,
+                "city": _city_from_slug(market_slug),
+                "market_slug": market_slug,
+                "token_id": token_id,
+                "order_id": result.order_id,
+                "opened_at": ts,
+                "entry_ask": buy_price,
+                "shares": actual_shares,
+                "size_usdc": round(actual_size_usdc, 2),
+                "mode": "real",
+            })
         return result
 
     # ── Venda / Fecho de posição ──────────────────────
@@ -602,6 +649,17 @@ class ClobClient:
             position.current_mid = sell_price
             position.last_updated = ts
             self.positions._save()
+            append_event({
+                "event_type": "BET_CLOSE",
+                "position_id": position.position_id,
+                "market_slug": position.market_slug,
+                "token_id": position.token_id,
+                "closed_at": ts,
+                "exit_price": sell_price,
+                "realized_pnl_usd": pnl_usd,
+                "result": position.status.value,
+                "mode": "paper",
+            })
             return OrderResult(
                 success=True, mode=TradingMode.PAPER,
                 order_id=f"PAPER-SELL-{int(time.time())}",
@@ -638,6 +696,17 @@ class ClobClient:
                 position.current_mid = sell_price
                 position.last_updated = ts
                 self.positions._save()
+                append_event({
+                    "event_type": "BET_CLOSE",
+                    "position_id": position.position_id,
+                    "market_slug": position.market_slug,
+                    "token_id": position.token_id,
+                    "closed_at": ts,
+                    "exit_price": sell_price,
+                    "realized_pnl_usd": pnl_usd,
+                    "result": position.status.value,
+                    "mode": "real",
+                })
 
             return OrderResult(
                 success=success, mode=TradingMode.REAL,
@@ -715,7 +784,9 @@ class PositionStatus(Enum):
 
 @dataclass
 class Position:
+    position_id: str
     date_opened: str
+    opened_at: str
     bracket_label: str
     token_id: str
     entry_ask: float
@@ -734,7 +805,9 @@ class Position:
 
     def to_dict(self):
         return {
+            "position_id": self.position_id,
             "date_opened": self.date_opened, "bracket_label": self.bracket_label,
+            "opened_at": self.opened_at,
             "token_id": self.token_id, "entry_ask": self.entry_ask,
             "shares": self.shares, "size_usdc": self.size_usdc,
             "mode": self.mode, "order_id": self.order_id,
@@ -748,7 +821,10 @@ class Position:
     @classmethod
     def from_dict(cls, d):
         p = cls(
-            date_opened=d["date_opened"], bracket_label=d["bracket_label"],
+            position_id=d.get("position_id", ""),
+            date_opened=d["date_opened"],
+            opened_at=d.get("opened_at", d.get("date_opened", "")),
+            bracket_label=d["bracket_label"],
             token_id=d.get("token_id", ""), entry_ask=float(d["entry_ask"]),
             shares=float(d["shares"]), size_usdc=float(d["size_usdc"]),
             mode=d.get("mode", "paper"), order_id=d.get("order_id", ""),
@@ -764,6 +840,11 @@ class Position:
             p.status = PositionStatus.UNKNOWN
         p.pnl_usd = d.get("pnl_usd")
         p.pnl_pct = d.get("pnl_pct")
+        if not p.position_id:
+            p.position_id = make_position_id(
+                p.date_opened, p.market_slug.split("-on-")[0] if p.market_slug else "unknown",
+                p.token_id, p.order_id, p.market_slug
+            )
         return p
 
 
@@ -886,6 +967,18 @@ class PositionManager:
         pos.current_mid = None
         pos.last_updated = _dt.now().isoformat()
         self._save()
+        append_event({
+            "event_type": "BET_CLOSE",
+            "position_id": pos.position_id,
+            "market_slug": pos.market_slug,
+            "token_id": pos.token_id,
+            "closed_at": pos.last_updated,
+            "exit_price": None,
+            "realized_pnl_usd": pos.pnl_usd,
+            "result": pos.status.value,
+            "mode": "paper",
+            "source": "resolve_paper_position",
+        })
         return True
 
     def _get_mid(self, pos, clob_client):

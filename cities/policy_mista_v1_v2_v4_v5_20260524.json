@@ -1,0 +1,31 @@
+{
+  "created_at": "2026-05-24",
+  "objective": "max trades/day com controlo de prematuras e pnl/day",
+  "policy": {
+    "ankara": "V4",
+    "beijing": "V1",
+    "buenos_aires": "V5",
+    "chicago": "V1",
+    "dallas": "V1",
+    "jakarta": "V4",
+    "karachi": "V1",
+    "kuala_lumpur": "V1",
+    "lagos": "V4",
+    "las_vegas": "V5",
+    "madrid": "V4",
+    "miami": "V4",
+    "moscow": "V1",
+    "munich": "V4",
+    "phoenix": "V5",
+    "singapore": "V4",
+    "taipei": "V2",
+    "tel_aviv": "V1",
+    "warsaw": "V4"
+  },
+  "variant_files": {
+    "V1": "*_backtest_single_2010-01-01_2026-05-16.json",
+    "V2": "*_backtest_single_profiles_off_2024-01-01_2026-05-16.json",
+    "V4": "*_backtest_single_profiles_aggr_2024-01-01_2026-05-16.json",
+    "V5": "*_backtest_single_profiles_v5_2024-01-01_2026-05-16.json"
+  }
+}

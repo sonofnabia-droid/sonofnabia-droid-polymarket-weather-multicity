@@ -6,9 +6,9 @@ Configuração de cidades para sistema multi-cidade.
 Contém CityConfig dataclass e CITIES dict com configuração das cidades.
 
 Última calibração: 2026-05-11 (mode=full, 7 anos de dados)
-threshold e hour_min reflectem os valores dos strategy_config_{city}.json.
+Os valores activos de threshold/hour_min vêm dos strategy_config_{city}.json.
 Em runtime o live_bot lê os JSONs directamente via city.strategy_config_path.
-Os valores aqui servem como documentação e fallback de emergência.
+Os valores aqui servem só como fallback neutro de emergência.
 """
 
 import json
@@ -25,6 +25,8 @@ class SingleEntryConfig:
     threshold: float = 0.650
     hour_min: int = 11
     stop_loss_delta: float = 1.0
+    min_buy_ask: float = 0.20
+    max_buy_ask: float = 0.85
 
 
 @dataclass
@@ -74,8 +76,8 @@ class CityConfig:
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CITIES
-#  Valores de threshold e hour_min: calibração 2026-05-11, mode=full, 7 anos.
-#  Score/win/trades referem-se ao período de selection do calibrate_all.
+#  Valores activos de threshold e hour_min vêm dos strategy_config_{city}.json.
+#  Os defaults aqui são neutros para não atrapalhar novas calibrações.
 # ══════════════════════════════════════════════════════════════════════════════
 
 CITIES = {
@@ -99,8 +101,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=97.68% score=204.2 trades/y=122 val_win=100.0%
-        hour_min=8,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 3.0,  2: 5.0,  3: 10.0, 4: 15.0, 5: 20.0, 6: 23.0,
@@ -123,8 +125,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=96.23% score=227.9 trades/y=232
-        hour_min=10,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 13.0, 2: 16.0, 3: 21.0, 4: 26.0, 5: 30.0, 6: 34.0,
@@ -147,8 +149,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.425,  # win=94.83% score=224.5 trades/y=232
-        hour_min=10,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 4.0,  2: 6.0,  3: 11.0, 4: 16.0, 5: 21.0, 6: 25.0,
@@ -176,8 +178,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=96.35% score=222.2 trades/y=201
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 31.0, 2: 32.0, 3: 32.0, 4: 32.0, 5: 32.0, 6: 32.0,
@@ -200,8 +202,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.400,  # win=95.20% score=215.1 trades/y=181
-        hour_min=12,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 30.0, 2: 30.0, 3: 31.0, 4: 32.0, 5: 32.0, 6: 32.0,
@@ -224,8 +226,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=97.85% score=214.6 trades/y=155 val_win=96.83%
-        hour_min=8,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 32.0, 2: 33.0, 3: 33.0, 4: 33.0, 5: 33.0, 6: 33.0,
@@ -248,8 +250,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.375,  # win=96.25% score=227.8 trades/y=232
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 32.0, 2: 33.0, 3: 33.0, 4: 32.0, 5: 31.0, 6: 29.0,
@@ -277,8 +279,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=87.59% score=175.6 trades/y=100 ⚠ win baixo
-        hour_min=12,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 19.0, 2: 20.0, 3: 23.0, 4: 26.0, 5: 30.0, 6: 32.0,
@@ -301,8 +303,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.525,  # win=97.07% score=227.5 trades/y=220
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 25.0, 2: 26.0, 3: 28.0, 4: 29.0, 5: 31.0, 6: 32.0,
@@ -325,8 +327,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.400,  # win=97.06% score=232.9 trades/y=250
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 25.0, 2: 27.0, 3: 32.0, 4: 35.0, 5: 36.0, 6: 35.0,
@@ -354,8 +356,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=80.59% score=177.0 trades/y=156 ⚠ não lançar
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: -4.0, 2: -3.0, 3: 4.0,  4: 12.0, 5: 20.0, 6: 23.0,
@@ -378,8 +380,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.375,  # win=82.57% score=188.4 trades/y=190 ⚠ não lançar
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 1.0,  2: 3.0,  3: 8.0,  4: 14.0, 5: 20.0, 6: 23.0,
@@ -402,8 +404,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=98.64% score=231.2 trades/y=220 val_win=98.67%
-        hour_min=15,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 1.0,  2: 5.0,  3: 12.0, 4: 20.0, 5: 26.0, 6: 31.0,
@@ -426,8 +428,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=94.31% score=210.6 trades/y=170 val_win=86.54% ⚠ overfitting
-        hour_min=8,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: -1.0, 2: 1.0,  3: 7.0,  4: 14.0, 5: 20.0, 6: 26.0,
@@ -454,8 +456,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=97.69% score=224.0 trades/y=195 val_win=94.12%
-        hour_min=8,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 10.0, 2: 12.0, 3: 16.0, 4: 18.0, 5: 23.0, 6: 28.0,
@@ -478,8 +480,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=93.98% score=210.4 trades/y=172
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 17.0, 2: 18.0, 3: 20.0, 4: 24.0, 5: 27.0, 6: 30.0,
@@ -507,8 +509,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=98.55% score=244.1 trades/y=299 val_win=99.07% ⭐ melhor
-        hour_min=8,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 19.0, 2: 22.0, 3: 26.0, 4: 31.0, 5: 36.0, 6: 41.0,
@@ -531,8 +533,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.725,  # win=95.09% score=231.7 trades/y=272
-        hour_min=14,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 13.0, 2: 17.0, 3: 22.0, 4: 27.0, 5: 33.0, 6: 39.0,
@@ -560,8 +562,8 @@ CITIES = {
         max_daily_loss=20.0,
         max_per_trade=5.0,
         extra_features=[],
-        threshold=0.350,  # win=98.04% score=236.1 trades/y=255 val_win=96.55%
-        hour_min=8,
+        threshold=None,
+        hour_min=None,
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 30.0, 2: 29.0, 3: 26.0, 4: 22.0, 5: 18.0, 6: 15.0,

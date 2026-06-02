@@ -105,6 +105,10 @@ def write_config(city_name: str, calibration: dict, existing: dict | None) -> Pa
     # Manter stop_loss_delta existente, ou default 1.0
     if "stop_loss_delta" not in single_block:
         single_block["stop_loss_delta"] = 1.0
+    if "min_buy_ask" not in single_block:
+        single_block["min_buy_ask"] = 0.20
+    if "max_buy_ask" not in single_block:
+        single_block["max_buy_ask"] = 0.85
     new_cfg["single"] = single_block
 
     # Meta

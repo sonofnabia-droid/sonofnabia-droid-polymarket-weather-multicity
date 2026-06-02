@@ -23,6 +23,7 @@ from cities.config import CITIES
 
 LOG_DIR = Path("live_bot_logs")
 SNAPSHOT_PATH = LOG_DIR / "live_snapshot.json"
+RECONCILED_PATH = LOG_DIR / "reconciled_summary.json"
 API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip()
 
 FLAGS = {
@@ -162,7 +163,11 @@ def require_auth(view_func):
 def get_snapshot() -> dict:
     snapshot = safe_read_json(SNAPSHOT_PATH, None)
     if not snapshot:
-        return fallback_snapshot()
+        snapshot = fallback_snapshot()
+    reconciled = safe_read_json(RECONCILED_PATH, None)
+    if isinstance(reconciled, dict):
+        snapshot["reconciled"] = reconciled
+        snapshot["reconciled_today"] = datetime.now(tz=ZoneInfo("Europe/Lisbon")).date().isoformat()
     for city in snapshot.get("cities", []):
         cfg = CITIES.get(city.get("name"))
         if not cfg:
@@ -179,7 +184,7 @@ def get_snapshot() -> dict:
     daily_pnl = summary.get("daily_pnl", 0.0)
     summary["initial_capital"] = initial_capital
     summary["current_capital"] = float(initial_capital or 0.0) + float(daily_pnl or 0.0)
-    snapshot["source"] = "live_snapshot"
+    snapshot["source"] = snapshot.get("source", "live_snapshot")
     return snapshot
 
 

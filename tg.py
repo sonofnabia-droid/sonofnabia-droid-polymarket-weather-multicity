@@ -154,23 +154,45 @@ class TG:
         icon = "🟡" if simulated else "✅"
 
         ask      = bet.get("ask") or bet.get("price", 0)
+        raw_ask  = bet.get("raw_ask")
         size     = bet.get("bet_size") or bet.get("size_usdc", 0)
         shares   = bet.get("shares", 0)
-        profit   = bet.get("max_profit", 0)
+        profit = bet.get("max_profit")
         order_id = str(bet.get("order_id", "?"))
         p_idx    = bet.get("parcel_idx")
         parcel_s = f"P{p_idx + 1} " if p_idx is not None else ""
         bracket  = bet.get("bracket", bet.get("bracket_label", "?"))
+        city     = bet.get("city", "?")
+        market   = bet.get("market_slug", "")
+        p_ens    = bet.get("p_ensemble")
+        rmax     = bet.get("running_max")
+
+        if profit is None:
+            try:
+                ask_f = float(ask or 0.0)
+                shares_f = float(shares or 0.0)
+                if ask_f > 0 and shares_f > 0:
+                    # Lucro máximo bruto se resolver YES em 1.00.
+                    profit = max(0.0, (1.0 - ask_f) * shares_f)
+                else:
+                    profit = 0.0
+            except Exception:
+                profit = 0.0
 
         lines = [
             f"{icon} <b>Ordem {parcel_s}colocada [{mode}]</b>",
             "",
+            f"  🏙 <b>{city}</b>",
             f"  🎯 <b>{bracket}</b>  ask <b>{ask*100:.1f}¢</b>",
+            f"  🔬 raw ask <b>{raw_ask*100:.1f}¢</b>" if raw_ask is not None else None,
+            f"  🧠 P(pico) <b>{p_ens*100:.1f}%</b>" if p_ens is not None else None,
+            f"  📍 RMax <b>{rmax:.1f}°C</b>" if rmax is not None else None,
             f"  💵 ${size:.2f}  →  {shares:.2f} shares",
             f"  📈 Max profit: <b>+${profit:.2f}</b>",
+            f"  🔎 <code>{market}</code>" if market else None,
             f"  🔗 ID: <code>{order_id}</code>",
         ]
-        return self.send("\n".join(lines))
+        return self.send("\n".join(line for line in lines if line))
 
     def alert_order_failed(self, error, bracket=None):
         """Ordem REAL falhou (saldo insuficiente, rede, etc)."""

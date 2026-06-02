@@ -39,6 +39,9 @@ FEATURE_COLS = [
     "wind_south_proxy", "wind_speed_kmh", "uv_index", "foehn_indicator",
 ]
 
+PEAK_LEAD_WINDOW_SLOTS = 2
+PEAK_LEAD_RATIO = 0.98
+
 
 def load_csv(csv_path: Path):
     with open(csv_path, "r", encoding="utf-8") as f:
@@ -145,6 +148,15 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
             continue
         peak_idx = peak_matches.index[-1]
 
+        positive_indices = {peak_idx}
+        for lead in range(1, PEAK_LEAD_WINDOW_SLOTS + 1):
+            lead_idx = peak_idx - lead
+            if lead_idx < 0:
+                continue
+            lead_temp = float(day_df.iloc[lead_idx]["temp_c"])
+            if lead_temp >= peak_temp * PEAK_LEAD_RATIO:
+                positive_indices.add(lead_idx)
+
         slots_so_far: list[dict] = []
 
         for row in day_df.itertuples(index=True):
@@ -154,7 +166,7 @@ def build_dataset(df: pd.DataFrame, city: CityConfig):
                 continue
             slot30 = int(getattr(row, "slot30", 0))
             temp = float(row.temp_c)
-            label = 1 if (i == peak_idx) else 0
+            label = 1 if (i in positive_indices) else 0
 
             prev7 = compute_prev7(history_max, d, city.name)
 
@@ -341,6 +353,7 @@ def run_training(city_name: str, no_wf: bool = False, quiet: bool = False) -> di
             "learning_rate": 0.02,
             "max_depth": 6,
             "num_leaves": 60,
+            "class_weight": {0: 1.5, 1: 1.0},
         }
 
         wf_result = {"per_year": {}, "mean_auc": None}
@@ -423,6 +436,7 @@ def main():
         "learning_rate": 0.02,
         "max_depth": 6,
         "num_leaves": 60,
+        "class_weight": {0: 1.5, 1: 1.0},
     }
 
     # Walk-forward antes do fit final

@@ -573,9 +573,9 @@ def _summary_table(city_data: list["CityDisplayData"]) -> Table:
     tbl.add_column("P(pico)",     justify="left",        width=24)
     tbl.add_column("FC WU/OM",    justify="center",      width=14)
     tbl.add_column("Target",      justify="left",        width=20)
-    tbl.add_column("Status",      justify="center",      width=14)
+    tbl.add_column("Status",      justify="center",      width=18)
     tbl.add_column("Tds",         justify="center",      width=4)
-    tbl.add_column("PnL hoje",    justify="right",       width=9)
+    tbl.add_column("PnL hoje",    justify="right",       width=11)
 
     for cd in city_data:
         city    = cd.city
@@ -627,6 +627,9 @@ def _summary_table(city_data: list["CityDisplayData"]) -> Table:
 
         # Status
         st_lbl, st_sty = _city_status(cd)
+        if (not cd.bought) and p >= 0.70 and p < thr:
+            st_lbl = "🔥 QUASE SIGNAL"
+            st_sty = "bold yellow"
         st_t = Text(st_lbl, style=st_sty, justify="center")
 
         # PnL
@@ -648,8 +651,8 @@ def _summary_table(city_data: list["CityDisplayData"]) -> Table:
 #  TABELA GLOBAL DE POSIÇÕES (todas as cidades)
 # ══════════════════════════════════════════════════════════════════════
 
-def _positions_table(city_data: list["CityDisplayData"], trading_mode_str: str) -> Optional[Table]:
-    """Tabela colectiva de posições abertas e fechadas de todas as cidades."""
+def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str) -> tuple[Optional[Table], Optional[Table]]:
+    """Tabelas colectivas: posições abertas e posições resolvidas."""
 
     # Recolher linhas: (city_name, pos_obj_or_None)
     rows: list[tuple[str, object]] = []
@@ -661,61 +664,37 @@ def _positions_table(city_data: list["CityDisplayData"], trading_mode_str: str) 
             rows.append((cd.city.name, None))  # posição paper sem CLOB
 
     if not rows:
-        return None
+        return None, None
 
-    tbl = Table(
-        title="  Posições — todas as cidades",
-        title_style="bold cyan",
-        box=rich_box.SIMPLE_HEAVY,
-        border_style="dim cyan",
-        header_style="bold dim",
-        padding=(0, 1),
-        expand=True,
-    )
-    tbl.add_column("Cidade",   style="bold", width=16)
-    tbl.add_column("Data",                   width=11)
-    tbl.add_column("Bracket",                width=20)
-    tbl.add_column("Entrada",  justify="right", width=8)
-    tbl.add_column("Actual",   justify="right", width=8)
-    tbl.add_column("P&L $",    justify="right", width=9)
-    tbl.add_column("P&L %",    justify="right", width=8)
-    tbl.add_column("Shares",   justify="right", width=7)
-    tbl.add_column("Status",   justify="center", width=12)
+    def _make_tbl(title: str) -> Table:
+        t = Table(
+            title=title,
+            title_style="bold cyan",
+            box=rich_box.SIMPLE_HEAVY,
+            border_style="dim cyan",
+            header_style="bold dim",
+            padding=(0, 1),
+            expand=True,
+        )
+        t.add_column("Cidade",   style="bold", width=16)
+        t.add_column("Abertura",               width=19)
+        t.add_column("Bracket",                width=20)
+        t.add_column("Entrada",  justify="right", width=8)
+        t.add_column("Actual",   justify="right", width=8)
+        t.add_column("P&L $",    justify="right", width=9)
+        t.add_column("P&L %",    justify="right", width=8)
+        t.add_column("Shares",   justify="right", width=7)
+        t.add_column("Status",   justify="center", width=12)
+        return t
 
-    total_pnl = 0.0
+    tbl_open = _make_tbl("  Posições Abertas — todas as cidades")
+    tbl_resolved = _make_tbl("  Posições Resolvidas — todas as cidades")
+    n_open = 0
+    n_resolved = 0
+    total_pnl_resolved = 0.0
 
-    for city_name, pos in rows:
-        flag = _flag(city_name)
-        clbl = f"{flag} {_label(city_name)}"
-
-        if pos is None:
-            # Posição paper sem CLOB — dados básicos
-            cd = next((c for c in city_data if c.city.name == city_name), None)
-            if not cd or not cd.position:
-                continue
-            ask = cd.position.get("ask", 0)
-            bkt = str(cd.position.get("bracket", "?"))[:18]
-            mode_lbl = Text("📄 PAPER", style="yellow")
-            tbl.add_row(clbl, date.today().isoformat(), bkt,
-                        f"{ask*100:.1f}¢", "—", "—", "—", "—", mode_lbl)
-            continue
-
-        # Posição CLOB
-        mid   = getattr(pos, "current_mid",   None)
-        pnl_u = getattr(pos, "pnl_usd",       None)
-        pnl_p = getattr(pos, "pnl_pct",       None)
-        entry = getattr(pos, "entry_ask",      0)
-        shr   = getattr(pos, "shares",         0)
-        s_val = getattr(pos, "status",         None)
-        d_op  = getattr(pos, "date_opened",    "?")
-        b_lbl = str(getattr(pos, "bracket_label", "?"))[:18]
-
-        if pnl_u is not None:
-            total_pnl += pnl_u
-
-        pnl_col = ("bold green" if (pnl_u or 0) > 0 else
-                   "bold red"   if (pnl_u or 0) < 0 else "dim")
-
+    def _status_for_row(pos_obj, city_name: str) -> tuple[str, str]:
+        s_val = getattr(pos_obj, "status", None)
         if _HAS_CLOB:
             _status_map = {
                 PositionStatus.OPEN:    ("🔵 ABERTA",   "cyan"),
@@ -725,9 +704,44 @@ def _positions_table(city_data: list["CityDisplayData"], trading_mode_str: str) 
                 PositionStatus.UNKNOWN: ("❓",           "dim"),
             }
             s_lbl, s_sty = _status_map.get(s_val, ("❓", "dim"))
-        else:
-            s_lbl, s_sty = ("ABERTA", "cyan")
+            if str(getattr(pos_obj, "mode", "")).lower() == "paper":
+                city_obj = next((c for c in city_data if c.city.name == city_name), None)
+                resolved_from_price = False
+                won_from_price = False
+                if city_obj and city_obj.market:
+                    token_id = getattr(pos_obj, "token_id", None)
+                    for b in (city_obj.market.get("brackets") or []):
+                        if token_id and b.get("token_id") == token_id:
+                            ask = b.get("ask")
+                            if ask is None:
+                                ask = b.get("price")
+                            try:
+                                ask_f = float(ask) if ask is not None else None
+                            except Exception:
+                                ask_f = None
+                            if ask_f is not None:
+                                if ask_f >= 0.99:
+                                    resolved_from_price = True
+                                    won_from_price = True
+                                elif ask_f <= 0.01:
+                                    resolved_from_price = True
+                                    won_from_price = False
+                            break
+                if resolved_from_price:
+                    s_lbl, s_sty = (
+                        ("✅ GANHOU", "bold green") if won_from_price else ("❌ PERDEU", "bold red")
+                    )
+                elif s_val == PositionStatus.OPEN:
+                    s_lbl, s_sty = ("🔵 ABERTA", "cyan")
+            return s_lbl, s_sty
+        return "ABERTA", "cyan"
 
+    def _is_resolved_status(lbl: str) -> bool:
+        return ("GANHOU" in lbl) or ("PERDEU" in lbl) or ("EXPIROU" in lbl)
+
+    def _add_row_to(tbl: Table, clbl: str, d_op: str, b_lbl: str, entry: float, mid, pnl_u, pnl_p, shr, s_lbl: str, s_sty: str):
+        pnl_col = ("bold green" if (pnl_u or 0) > 0 else
+                   "bold red"   if (pnl_u or 0) < 0 else "dim")
         tbl.add_row(
             clbl, str(d_op), b_lbl,
             f"{entry*100:.1f}¢",
@@ -738,13 +752,50 @@ def _positions_table(city_data: list["CityDisplayData"], trading_mode_str: str) 
             Text(s_lbl, style=s_sty),
         )
 
-    if total_pnl != 0.0:
-        pc = "bold green" if total_pnl >= 0 else "bold red"
-        tbl.add_section()
-        tbl.add_row("", "", "", "", "TOTAL P&L", "",
-                    Text(f"{total_pnl:+.2f}$", style=pc), "", "")
+    for city_name, pos in rows:
+        flag = _flag(city_name)
+        clbl = f"{flag} {_label(city_name)}"
 
-    return tbl
+        if pos is None:
+            cd = next((c for c in city_data if c.city.name == city_name), None)
+            if not cd or not cd.position:
+                continue
+            ask = cd.position.get("ask", 0)
+            bkt = str(cd.position.get("bracket", "?"))[:18]
+            tbl_open.add_row(
+                clbl, date.today().isoformat(), bkt,
+                f"{ask*100:.1f}¢", "—", "—", "—", "—",
+                Text("📄 PAPER", style="yellow"),
+            )
+            n_open += 1
+            continue
+
+        mid   = getattr(pos, "current_mid",   None)
+        pnl_u = getattr(pos, "pnl_usd",       None)
+        pnl_p = getattr(pos, "pnl_pct",       None)
+        entry = getattr(pos, "entry_ask",      0)
+        shr   = getattr(pos, "shares",         0)
+        d_op  = getattr(pos, "opened_at", None) or getattr(pos, "date_opened", "?")
+        b_lbl = str(getattr(pos, "bracket_label", "?"))[:18]
+
+        s_lbl, s_sty = _status_for_row(pos, city_name)
+        resolved = _is_resolved_status(s_lbl)
+        if resolved:
+            _add_row_to(tbl_resolved, clbl, str(d_op), b_lbl, entry, mid, pnl_u, pnl_p, shr, s_lbl, s_sty)
+            n_resolved += 1
+            if pnl_u is not None:
+                total_pnl_resolved += float(pnl_u)
+        else:
+            _add_row_to(tbl_open, clbl, str(d_op), b_lbl, entry, mid, pnl_u, pnl_p, shr, s_lbl, s_sty)
+            n_open += 1
+
+    if n_resolved > 0 and total_pnl_resolved != 0.0:
+        pc = "bold green" if total_pnl_resolved >= 0 else "bold red"
+        tbl_resolved.add_section()
+        tbl_resolved.add_row("", "", "", "", "TOTAL P&L", "",
+                             Text(f"{total_pnl_resolved:+.2f}$", style=pc), "", "")
+
+    return (tbl_open if n_open else None), (tbl_resolved if n_resolved else None)
 
 
 def _position_to_snapshot(pos) -> dict:
@@ -777,6 +828,7 @@ def _city_to_snapshot(cd: "CityDisplayData") -> dict:
                 "label": b.get("label"),
                 "ask": b.get("ask") or b.get("price"),
                 "bid": b.get("bid"),
+                "volume": b.get("volume"),
                 "temp_lo": b.get("temp_lo"),
                 "temp_hi": b.get("temp_hi"),
                 "token_id": b.get("token_id"),
@@ -906,6 +958,16 @@ def render_dashboard(
     total_pnl   = session_stats.get("total_pnl",    0.0)
     total_trades= session_stats.get("total_trades",  0)
     total_bkr   = sum(cd.bankroll for cd in city_data)
+    open_out_of_day = 0
+    for cd in city_data:
+        city_today = datetime.now(tz=ZoneInfo(cd.city.timezone)).date().isoformat()
+        for pos in cd.positions_all or []:
+            status = getattr(getattr(pos, "status", None), "value", getattr(pos, "status", None))
+            if str(status).lower() != "open":
+                continue
+            d_open = str(getattr(pos, "date_opened", "") or "")
+            if d_open and d_open != city_today:
+                open_out_of_day += 1
 
     # ── HEADER ─────────────────────────────────────────────────────
     is_paper = trading_mode_str == "PAPER"
@@ -935,6 +997,9 @@ def render_dashboard(
         pnl_c = "green" if total_pnl >= 0 else "red"
         hdr.append(f"Sessão: {total_trades} trades  ", style="dim")
         hdr.append(f"PnL {total_pnl:+.2f}$  ", style=f"bold {pnl_c}")
+    hdr.append("│ ", style="dim")
+    sanity_style = "bold green" if open_out_of_day == 0 else "bold red"
+    hdr.append(f"Sanity abertas fora do dia: {open_out_of_day}  ", style=sanity_style)
 
     hdr.append("│ ", style="dim")
     hdr.append(f"Bankroll ${total_bkr:,.0f}  ", style="dim")
@@ -954,10 +1019,13 @@ def render_dashboard(
     ))
 
     # ── POSIÇÕES GLOBAIS ───────────────────────────────────────────
-    pos_tbl = _positions_table(city_data, trading_mode_str)
-    if pos_tbl:
+    pos_open_tbl, pos_resolved_tbl = _positions_tables(city_data, trading_mode_str)
+    if pos_open_tbl:
         _con.print()
-        _con.print(Panel(pos_tbl, border_style="dim cyan", padding=(0, 1)))
+        _con.print(Panel(pos_open_tbl, border_style="dim cyan", padding=(0, 1)))
+    if pos_resolved_tbl:
+        _con.print()
+        _con.print(Panel(pos_resolved_tbl, border_style="dim cyan", padding=(0, 1)))
 
     # ── FOOTER ─────────────────────────────────────────────────────
     pnl_dia   = sum(cd.daily_pnl  for cd in city_data)

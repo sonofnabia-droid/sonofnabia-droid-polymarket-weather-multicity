@@ -9,6 +9,7 @@ Uso:
 """
 
 import argparse
+import csv
 import math
 import json
 import time
@@ -355,7 +356,7 @@ def _bootstrap_state_today(state: CityState) -> None:
             series, slots = bootstrap_today(
                 city, state.wu_key, state.wu_sess, verbose=not state.dashboard_enabled
             )
-            if len(slots) < 4:
+            if len(slots) < 4 and not getattr(state, "wu_only", False):
                 print(f"  {C['yellow']}{city.name}: WU com poucos dados, fallback OM{R}")
                 series, slots = bootstrap_om_today(
                     city, state.om_sess, verbose=not state.dashboard_enabled
@@ -392,28 +393,62 @@ def _bootstrap_state_today(state: CityState) -> None:
 
 
 def _settle_paper_positions_for_day(state: CityState, city_today: date) -> float:
-    """Resolve PAPER positions abertas do dia atual usando o pico observado."""
+    """Resolve PAPER positions abertas (dia atual e pendentes antigas)."""
     if not state.clob or not hasattr(state.clob, "positions"):
         return 0.0
 
-    if state.slots_so_far:
-        peak_temp = max(float(s["temp_c"]) for s in state.slots_so_far)
-    elif state.latest_obs and state.latest_obs.get("temp_c") is not None:
-        peak_temp = float(state.latest_obs["temp_c"])
-    else:
-        peak_temp = 0.0
+    def _peak_for_date(target_day: date) -> Optional[float]:
+        if target_day == city_today:
+            if state.slots_so_far:
+                return max(float(s["temp_c"]) for s in state.slots_so_far)
+            if state.latest_obs and state.latest_obs.get("temp_c") is not None:
+                return float(state.latest_obs["temp_c"])
+            return None
 
-    today_key = city_today.isoformat()
+        hist_path = Path("historic") / f"{state.city.name}.csv"
+        if not hist_path.exists():
+            return None
+
+        target_key = target_day.strftime("%d/%m/%Y")
+        max_temp: Optional[float] = None
+        try:
+            with hist_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if str(row.get("date", "")).strip() != target_key:
+                        continue
+                    t_raw = row.get("temp_c")
+                    if t_raw in (None, ""):
+                        continue
+                    t = float(t_raw)
+                    max_temp = t if max_temp is None else max(max_temp, t)
+        except Exception:
+            return None
+        return max_temp
+
     settled_pnl = 0.0
+    peaks_cache: dict[str, Optional[float]] = {}
     for pos in state.clob.positions.open_positions():
-        if str(getattr(pos, "date_opened", "")) != today_key:
+        pos_day_raw = str(getattr(pos, "date_opened", "") or "")
+        try:
+            pos_day = date.fromisoformat(pos_day_raw)
+        except Exception:
             continue
+        if pos_day > city_today:
+            continue
+
         pos_id = str(
             getattr(pos, "order_id", "")
             or getattr(pos, "token_id", "")
             or getattr(pos, "bracket_label", "")
         )
         if pos_id and pos_id in state._settled_position_ids:
+            continue
+        day_key = pos_day.isoformat()
+        if day_key not in peaks_cache:
+            peaks_cache[day_key] = _peak_for_date(pos_day)
+        peak_temp = peaks_cache[day_key]
+        if peak_temp is None:
             continue
         if state.clob.positions.resolve_paper_position(pos, peak_temp):
             settled_pnl += float(getattr(pos, "pnl_usd", 0.0) or 0.0)
@@ -1100,6 +1135,8 @@ def main():
                         help="Desativa dashboard rich (útil para logs/daemon)")
     parser.add_argument("--force-dashboard", action="store_true",
                         help="Força dashboard rich mesmo se stdout não parecer TTY")
+    parser.add_argument("--wu-only", action="store_true",
+                        help="Para cidades com WU, não usa fallback Open-Meteo")
     args = parser.parse_args()
 
     raw_city_names = [c.strip() for c in args.cities.split(",") if c.strip()]
@@ -1156,12 +1193,15 @@ def main():
             daily_stats=DailyStats(date=city_date(city)),  # ← NOVO
             dashboard_enabled=dashboard_enabled,
         )
+        state.wu_only = bool(args.wu_only)
 
         import os
         state.wu_key = os.environ.get("WU_API_KEY", "")
 
         if city.wu_history_path and not state.wu_key:
             print(f"  {C['yellow']}{city.name}: WU_API_KEY não definida, usando apenas OM{R}")
+        if city.wu_history_path and state.wu_only:
+            print(f"  {C['cyan']}{city.name}: WU-only ativo (sem fallback OM){R}")
 
         state.wu_sess = make_wu_session()
         state.om_sess = make_om_session()

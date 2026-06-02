@@ -10,6 +10,7 @@ Baseado em POLY-IRIS munich_phased_entry.py::SingleEntry.
 """
 import sys
 import json
+import math
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -29,6 +30,8 @@ class SingleEntry:
         threshold = None
         hour_min = None
         stop_loss_delta = None
+        min_buy_ask = None
+        max_buy_ask = None
 
         if _cfg_path.exists():
             try:
@@ -37,6 +40,8 @@ class SingleEntry:
                 threshold = sc.get("threshold")
                 hour_min = sc.get("hour_min")
                 stop_loss_delta = sc.get("stop_loss_delta")
+                min_buy_ask = sc.get("min_buy_ask")
+                max_buy_ask = sc.get("max_buy_ask")
             except Exception:
                 pass
 
@@ -58,6 +63,16 @@ class SingleEntry:
             kwargs.get("stop_loss_delta")
             or stop_loss_delta
             or 1.0
+        )
+        self.min_buy_ask = (
+            kwargs.get("min_buy_ask")
+            or min_buy_ask
+            or 0.20
+        )
+        self.max_buy_ask = (
+            kwargs.get("max_buy_ask")
+            or max_buy_ask
+            or 0.85
         )
 
         self.bought = False
@@ -86,12 +101,40 @@ class SingleEntry:
             }]
 
         if p_ensemble >= self.threshold:
+            bracket = self._select_target_bracket(market, running_max) if market else None
+            if bracket is not None:
+                ask = float(bracket.get("ask", bracket.get("price", 1.0)) or 1.0)
+                if ask < self.min_buy_ask:
+                    return [{
+                        "parcel_idx": 0,
+                        "size_usdc": 0,
+                        "reason": (
+                            f"SINGLE: bracket barato demais ({ask*100:.1f}¢ < "
+                            f"{self.min_buy_ask*100:.0f}¢)"
+                        ),
+                        "model_ok": True,
+                        "market_ok": False,
+                        "bracket": bracket,
+                    }]
+                if ask > self.max_buy_ask:
+                    return [{
+                        "parcel_idx": 0,
+                        "size_usdc": 0,
+                        "reason": (
+                            f"SINGLE: bracket caro demais ({ask*100:.0f}¢ > "
+                            f"{self.max_buy_ask*100:.0f}¢)"
+                        ),
+                        "model_ok": True,
+                        "market_ok": False,
+                        "bracket": bracket,
+                    }]
             return [{
                 "parcel_idx": 0,
                 "size_usdc": self.parcel_size,
                 "reason": f"SINGLE: p={p_ensemble*100:.0f}% >= {self.threshold*100:.0f}% @ {hour}h",
                 "model_ok": True,
                 "market_ok": True,
+                "bracket": bracket,
             }]
 
         return [{
@@ -101,6 +144,31 @@ class SingleEntry:
             "model_ok": False,
             "market_ok": None,
         }]
+
+    @staticmethod
+    def _select_target_bracket(market: dict | None, running_max: float) -> dict | None:
+        if not market:
+            return None
+        brackets = market.get("brackets") or []
+        if not brackets:
+            return None
+
+        target_temp = int(math.floor(running_max))
+        best = None
+        for bracket in brackets:
+            lo = bracket.get("temp_lo")
+            hi = bracket.get("temp_hi")
+            if lo is None or hi is None:
+                continue
+            if lo <= target_temp <= hi:
+                best = bracket
+                break
+        if best is None:
+            best = min(
+                brackets,
+                key=lambda b: abs(((float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2) - target_temp),
+            )
+        return best
 
     def check_stop_loss(self, current_temp: float) -> dict | None:
         if not self.bought or self.sold_by_stop or self.record is None:

@@ -1,65 +1,18 @@
-const state = { lastSeen: null, timer: null };
+const state = { timer: null, selectedCity: null };
 
 const fmtMoney = (value) => {
   const n = Number(value || 0);
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}$`;
 };
-
-const fmtCapital = (value) => `$${Number(value || 0).toLocaleString("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})}`;
-const fmtTemp = (value) => value === null || value === undefined ? "—" : `${Number(value).toFixed(1)}°`;
+const fmtCapital = (value) => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const intTemp = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n < 0 ? Math.ceil(n) : Math.floor(n);
+};
+const fmtTemp = (value) => value === null || value === undefined ? "—" : `${intTemp(value)}°`;
 const fmtPct = (value) => `${Math.round(Number(value || 0) * 100)}%`;
-const fmtPrice = (value) => value === null || value === undefined ? "" : ` · ${Math.round(Number(value) * 100)}¢`;
-const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({
-  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-}[ch]));
-
-function marketFavorite(city) {
-  const brackets = (city.market && city.market.brackets) || [];
-  return [...brackets].sort((a, b) => (b.ask || 0) - (a.ask || 0))[0] || {};
-}
-
-function isMarketResolved(city) {
-  if (city.bought) return false;
-  const fav = marketFavorite(city);
-  const favAsk = fav.ask ?? fav.price;
-  return favAsk !== null && favAsk !== undefined && Number(favAsk) >= 0.95;
-}
-
-function wuLabel(city) {
-  if (!city.has_wu) return "WU n/a";
-  return city.wu_forecast == null ? "WU —" : `WU ${Math.round(city.wu_forecast)}°`;
-}
-
-function omLabel(city) {
-  return city.om_forecast == null ? "OM —" : `OM ${Math.round(city.om_forecast)}°`;
-}
-
-function statusClass(city) {
-  const s = String(city.status || "").toLowerCase();
-  if (city.stop_loss_hit || s.includes("stop")) return "stop";
-  if (city.bought || s.includes("comprado")) return "bought";
-  if (isMarketResolved(city)) return "resolved";
-  if ((city.p_ensemble || 0) >= (city.threshold || 0.65) || s.includes("signal")) return "signal";
-  if (s.includes("monitor")) return "monitoring";
-  if (s.includes("aguarda") || s.includes("fora") || s.includes("sem snapshot")) return "idle";
-  return "";
-}
-
-function cityGroup(city) {
-  const cls = statusClass(city);
-  if (cls === "stop" || cls === "bought") return "bought";
-  if (cls === "signal" || cls === "monitoring") return "monitoring";
-  return "idle";
-}
-
-function idleSortRank(city) {
-  const cls = statusClass(city);
-  if (cls === "resolved") return 1;
-  return 0;
-}
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
 function ageLabel(iso) {
   if (!iso) return "sem dados";
@@ -68,6 +21,31 @@ function ageLabel(iso) {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+function marketFavorite(city) {
+  const brackets = (city.market && city.market.brackets) || [];
+  return [...brackets].sort((a, b) => (b.ask || 0) - (a.ask || 0))[0] || {};
+}
+
+function isWuSource(src) {
+  const s = String(src || "").toLowerCase();
+  return s.includes("wu") || s.includes("weather underground") || s.includes("station");
+}
+
+function chartSlotsForCity(city) {
+  const slots = city.slots || [];
+  const wuSlots = slots.filter(s => isWuSource(s.source));
+  return wuSlots.length >= 2 ? wuSlots : slots;
+}
+
+function statusClass(city) {
+  const s = String(city.status || "").toLowerCase();
+  if (city.stop_loss_hit || s.includes("stop")) return "stop";
+  if (city.bought || s.includes("comprado")) return "bought";
+  if ((city.p_ensemble || 0) >= (city.threshold || 0.65) || s.includes("signal")) return "signal";
+  if (s.includes("monitor")) return "monitoring";
+  return "idle";
 }
 
 function sparkline(slots) {
@@ -82,116 +60,102 @@ function sparkline(slots) {
     const y = h - pad - ((t - min) / range) * (h - pad * 2);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return `
-    <svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
-      <polyline points="${pts}" fill="none" stroke="rgba(80,213,255,.85)" stroke-width="2.2" />
-      <line x1="0" y1="${h - pad}" x2="${w}" y2="${h - pad}" stroke="rgba(255,255,255,.08)" />
-    </svg>
-  `;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="rgba(80,213,255,.85)" stroke-width="2.2" /></svg>`;
 }
 
 function renderMetrics(data) {
   const summary = data.summary || {};
-  const capitalStart = Number(summary.initial_capital ?? summary.bankroll ?? 0);
-  const capitalNow = Number(summary.current_capital ?? (capitalStart + Number(summary.daily_pnl || 0)));
-  document.getElementById("m-cities").textContent = summary.n_cities ?? "--";
-  document.getElementById("m-signals").textContent = summary.n_signal ?? "--";
-  document.getElementById("m-positions").textContent = summary.n_bought ?? "--";
-  document.getElementById("m-capital-start").textContent = capitalStart ? fmtCapital(capitalStart) : "--";
-  document.getElementById("m-capital-now").textContent = capitalNow ? fmtCapital(capitalNow) : "--";
+  const session = data.session || {};
+  const cities = data.cities || [];
+  const reconciled = data.reconciled || {};
+  const reconciledDaily = reconciled.daily || {};
+  const reconciledTodayKey = data.reconciled_today || new Date().toISOString().slice(0, 10);
+  const reconciledToday = reconciledDaily[reconciledTodayKey] || null;
+  const hasPosition = (c) => Boolean(c.bought || c.position || (c.positions_all && c.positions_all.length));
+  const nCities = cities.length || Number(summary.n_cities || 0);
+  const nPositions = cities.filter(hasPosition).length;
+  const nSignals = cities.filter(c => !hasPosition(c) && Number(c.p_ensemble || 0) >= Number(c.threshold || 0.65)).length;
+  let dailyTrades = cities.reduce((acc, c) => acc + Number(c.n_trades || 0), 0);
+  let dailyPnl = cities.reduce((acc, c) => acc + Number(c.daily_pnl || 0), 0);
+  if (reconciledToday) {
+    dailyTrades = Number(reconciledToday.trades || 0);
+    dailyPnl = Number(reconciledToday.realized_pnl || 0);
+  }
+  if (dailyPnl === 0 && Number.isFinite(Number(session.total_pnl))) {
+    dailyPnl = Number(session.total_pnl || 0);
+  }
+
+  const capitalStart = Number(summary.initial_capital ?? 1000);
+  const realizedTotal = Number(reconciled.total_realized_pnl || 0);
+  const capitalNow = capitalStart + (reconciledToday ? realizedTotal : dailyPnl);
+
+  document.getElementById("m-cities").textContent = nCities || "--";
+  document.getElementById("m-signals").textContent = nSignals ?? "--";
+  document.getElementById("m-positions").textContent = nPositions ?? "--";
+  document.getElementById("m-capital-start").textContent = fmtCapital(capitalStart);
+  document.getElementById("m-capital-now").textContent = fmtCapital(capitalNow);
   document.getElementById("m-capital-now").className = capitalNow >= capitalStart ? "money-pos" : "money-neg";
-  document.getElementById("m-pnl").textContent = fmtMoney(summary.daily_pnl);
-  document.getElementById("m-pnl").className = Number(summary.daily_pnl || 0) >= 0 ? "money-pos" : "money-neg";
-  document.getElementById("m-trades").textContent = summary.daily_trades ?? "--";
+  document.getElementById("m-pnl").textContent = fmtMoney(dailyPnl);
+  document.getElementById("m-pnl").className = Number(dailyPnl || 0) >= 0 ? "money-pos" : "money-neg";
+  const tradesDisplay = reconciledToday
+    ? Number(dailyTrades || 0)
+    : Math.max(Number(dailyTrades || 0), Number(session.total_trades || 0), Number(nPositions || 0));
+  document.getElementById("m-trades").textContent = tradesDisplay ?? "--";
   document.getElementById("m-updated").textContent = ageLabel(data.generated_at);
+  document.getElementById("source").textContent = data.source === "live_snapshot" ? `live snapshot · ${ageLabel(data.generated_at)} atrás` : "fallback logs";
 
   const mode = document.getElementById("mode");
   mode.textContent = data.trading_mode || "UNKNOWN";
   mode.className = `pill ${String(data.trading_mode || "").toLowerCase()}`;
-
-  document.getElementById("source").textContent =
-    data.source === "live_snapshot" ? `live snapshot · ${ageLabel(data.generated_at)} atrás` : "fallback logs";
 }
 
-function cityCard(city, generatedAt) {
-  const cls = statusClass(city);
-  const stale = generatedAt && (Date.now() - new Date(generatedAt).getTime()) > 120000 ? " stale" : "";
-  const p = Number(city.p_ensemble || 0);
-  const thr = Number(city.threshold || 0.65);
-  const fillClass = p >= thr ? "buy" : p >= thr * 0.85 ? "hot" : "";
-  const target = city.target_bracket || {};
-  const ask = target.ask ?? target.price;
-  const market = city.market || {};
-  const favorite = marketFavorite(city);
-  const favoriteAsk = favorite.ask ?? favorite.price;
-  const forecastState = city.forecast_agree === true ? "concordam" : city.forecast_agree === false ? "divergem" : "sem consenso";
-  const statusText = cls === "resolved" ? "✅ RESOLVIDO" : (city.status || "Monitor");
-
-  return `
-    <article class="city-card ${cls}${stale}">
-      <div class="city-head">
-        <div class="city-name">
-          <div class="flag">${esc(city.flag || "🌍")}</div>
-          <div>
-            <strong>${esc(city.label || city.name)}</strong>
-            <span>${esc(city.local_hm || "--:--")} · ${esc(city.timezone || "")}</span>
-          </div>
-        </div>
-        <div class="status ${cls}">${esc(statusText)}</div>
-      </div>
-
-      <div class="trade-readings overview">
-        <div class="reading primary"><span>Agora</span><strong>${fmtTemp(city.temp)}</strong></div>
-        <div class="reading"><span>WU</span><strong>${city.has_wu ? (city.wu_forecast == null ? "—" : `${Math.round(city.wu_forecast)}°`) : "n/a"}</strong></div>
-        <div class="reading"><span>Open-Meteo</span><strong>${city.om_forecast == null ? "—" : `${Math.round(city.om_forecast)}°`}</strong></div>
-        <div class="reading forecast-state"><span>Forecast</span><strong>${esc(forecastState)}</strong></div>
-      </div>
-
-      ${sparkline(city.slots)}
-
-      <div class="prob-row">
-        <span>P(pico)</span>
-        <div class="bar"><div class="bar-fill ${fillClass}" style="width:${Math.min(100, p * 100)}%"></div></div>
-        <strong>${fmtPct(p)}</strong>
-      </div>
-
-      <div class="market-box">
-        <div>
-          <span>Bracket do bot</span>
-          <strong>${target.label ? esc(target.label) : "—"}${fmtPrice(ask)}</strong>
-        </div>
-        <div>
-          <span>Favorito mercado</span>
-          <strong class="market-favorite">${favorite.label ? esc(favorite.label) : "—"}${fmtPrice(favoriteAsk)}</strong>
-        </div>
-        <div>
-          <span>Volume</span>
-          <strong>${market.volume ? `$${Math.round(market.volume).toLocaleString("en-US")}` : "—"}</strong>
-        </div>
-      </div>
-    </article>
-  `;
+function activeWatchRows(cities) {
+  return (cities || [])
+    .filter(c => c.market && c.market.brackets && c.market.brackets.length)
+    .sort((a, b) => {
+      const aHasPos = Boolean(a.bought || a.position || (a.positions_all && a.positions_all.length));
+      const bHasPos = Boolean(b.bought || b.position || (b.positions_all && b.positions_all.length));
+      if (aHasPos !== bHasPos) return Number(bHasPos) - Number(aHasPos); // ativas com posição primeiro
+      const aSignal = Number(a.p_ensemble || 0) >= Number(a.threshold || 0.65);
+      const bSignal = Number(b.p_ensemble || 0) >= Number(b.threshold || 0.65);
+      if (aSignal !== bSignal) return Number(bSignal) - Number(aSignal); // depois sinais ativos
+      return (b.market.volume || 0) - (a.market.volume || 0);
+    });
 }
 
-function renderCities(data) {
-  const grouped = { idle: [], monitoring: [], bought: [] };
-  for (const city of data.cities || []) {
-    grouped[cityGroup(city)].push(city);
+function renderWatchlist(data) {
+  const holder = document.getElementById("watchlist");
+  const rows = activeWatchRows(data.cities);
+  document.getElementById("watch-count").textContent = rows.length;
+  if (!rows.length) {
+    holder.innerHTML = `<div class="empty">Ainda sem dados de mercado.</div>`;
+    return;
   }
-  grouped.monitoring.sort((a, b) =>
-    ((b.p_ensemble || 0) - (b.threshold || 0.65)) - ((a.p_ensemble || 0) - (a.threshold || 0.65))
-  );
-  grouped.bought.sort((a, b) => (b.daily_pnl || 0) - (a.daily_pnl || 0));
-  grouped.idle.sort((a, b) => idleSortRank(a) - idleSortRank(b) || String(a.label).localeCompare(String(b.label)));
+  holder.innerHTML = rows.map(city => {
+    const best = marketFavorite(city);
+    const pRaw = Number(city.p_ensemble || 0);
+    const hasPosition = Boolean(city.bought || city.position || (city.positions_all && city.positions_all.length));
+    const isSignal = Number(city.p_ensemble || 0) >= Number(city.threshold || 0.65);
+    const buying = hasPosition ? " buying" : "";
+    const active = (!hasPosition && isSignal) ? " active" : "";
+    const selected = state.selectedCity === city.name ? " selected" : "";
+    return `
+      <div class="market-row${buying}${active}${selected}" data-city="${esc(city.name)}">
+        <div class="row-top"><span>${esc(city.flag)} ${esc(city.label)}</span><span class="market-favorite">${best.ask == null ? "—" : `${Math.round(best.ask * 100)}¢`}</span></div>
+        <div class="market-local-time">${esc(city.local_hm || "--:--")} · ${esc(city.timezone || "")}</div>
+        <div class="row-sub"><span>${esc(best.label || "—")}</span><span>${city.market.volume ? `$${Math.round(city.market.volume).toLocaleString("en-US")}` : "sem vol"}</span></div>
+        <div class="mini-prob"><span>P(pico)</span><div class="mini-bar"><div style="width:${Math.min(100, pRaw * 100)}%"></div></div><strong>${fmtPct(pRaw)}</strong></div>
+      </div>
+    `;
+  }).join("");
 
-  for (const key of ["idle", "monitoring", "bought"]) {
-    const lane = document.getElementById(`lane-${key}`);
-    const count = document.getElementById(`count-${key}`);
-    count.textContent = grouped[key].length;
-    lane.innerHTML = grouped[key].length
-      ? grouped[key].map(city => cityCard(city, data.generated_at)).join("")
-      : `<div class="empty lane-empty">Sem cidades neste estado.</div>`;
-  }
+  holder.querySelectorAll(".market-row").forEach(el => {
+    el.addEventListener("click", () => {
+      state.selectedCity = el.getAttribute("data-city");
+      renderWatchlist(data);
+      renderDetail(data);
+    });
+  });
 }
 
 function collectPositions(cities) {
@@ -207,69 +171,184 @@ function collectPositions(cities) {
 
 function renderPositions(data) {
   const holder = document.getElementById("positions");
+  if (!holder) return;
   const rows = collectPositions(data.cities);
-  document.getElementById("position-count").textContent = rows.length;
-  if (!rows.length) {
-    holder.innerHTML = `<div class="empty">Sem posições abertas ou registadas.</div>`;
+  const openRows = rows.filter(({ pos }) => String(pos.status || "").toLowerCase() === "open");
+  const displayRows = (openRows.length ? openRows : rows).slice(0, 12);
+  const countEl = document.getElementById("position-count");
+  if (countEl) countEl.textContent = String(rows.length);
+  if (!displayRows.length) {
+    holder.innerHTML = `<div class="empty">Sem posições abertas.</div>`;
     return;
   }
-  holder.innerHTML = rows.slice(0, 12).map(({ city, pos }) => {
-    const pnl = pos.pnl_usd ?? 0;
-    const entry = pos.entry_ask ?? pos.ask;
-    const bracket = pos.bracket_label ?? pos.bracket ?? "Bracket";
+  holder.innerHTML = displayRows.map(({ city, pos }) => {
+    const pnl = Number(pos.pnl_usd || 0);
+    const entry = Number(pos.entry_ask ?? pos.ask ?? 0);
+    const status = String(pos.status || "open").toUpperCase();
     return `
       <div class="position-row">
         <div class="row-top">
-          <span>${esc(city.flag)} ${esc(city.label)}</span>
-          <span class="${Number(pnl) >= 0 ? "money-pos" : "money-neg"}">${pos.pnl_usd == null ? "—" : fmtMoney(pnl)}</span>
+          <span>${esc(city.flag || "🌍")} ${esc(city.label || city.name)}</span>
+          <span class="${pnl >= 0 ? "money-pos" : "money-neg"}">${fmtMoney(pnl)}</span>
         </div>
         <div class="row-sub">
-          <span>${esc(bracket)}</span>
-          <span>${entry ? `${Math.round(entry * 100)}¢` : "—"} · ${esc(pos.status || pos.mode || "")}</span>
+          <span>${esc(pos.bracket_label || pos.bracket || "Bracket")}</span>
+          <span>${entry > 0 ? `${Math.round(entry * 100)}¢` : "—"} · ${esc(status)}</span>
         </div>
       </div>
     `;
   }).join("");
 }
 
-function renderMarkets(data) {
-  const holder = document.getElementById("markets");
-  const rows = (data.cities || [])
-    .filter(c => c.market && c.market.brackets && c.market.brackets.length && !isMarketResolved(c))
-    .sort((a, b) => (b.market.volume || 0) - (a.market.volume || 0))
-    .slice(0, 10);
-  if (!rows.length) {
-    holder.innerHTML = `<div class="empty">Ainda sem dados de mercado.</div>`;
-    return;
-  }
-  holder.innerHTML = rows.map(city => {
-    const best = marketFavorite(city);
-    const pRaw = Number(city.p_ensemble || 0);
-    const p = fmtPct(pRaw);
-    const fc = `${wuLabel(city)} · ${omLabel(city)}`;
+function tempChart(city) {
+  const slots = chartSlotsForCity(city);
+  const temps = slots.map(s => Number(s.temp_c)).filter(Number.isFinite);
+  if (temps.length < 2) return `<div class="empty">Sem dados suficientes para chart de temperatura.</div>`;
+  const w = 760, h = 280, padL = 48, padR = 18, padT = 16, padB = 30;
+  const min = Math.min(...temps);
+  const max = Math.max(...temps);
+  const range = Math.max(max - min, 0.5);
+  const yTicks = [min, min + range * 0.5, max];
+  const xLabelL = slots[0] ? `${String(slots[0].hour).padStart(2, "0")}:${String(slots[0].slot30 || 0).padStart(2, "0")}` : "";
+  const xLabelR = slots[slots.length - 1]
+    ? `${String(slots[slots.length - 1].hour).padStart(2, "0")}:${String(slots[slots.length - 1].slot30 || 0).padStart(2, "0")}`
+    : "";
+
+  const xSpan = w - padL - padR;
+  const ySpan = h - padT - padB;
+  const pts = temps.map((t, i) => {
+    const x = padL + (i / Math.max(temps.length - 1, 1)) * xSpan;
+    const y = h - padB - ((t - min) / range) * ySpan;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const dots = temps.map((t, i) => {
+    const x = padL + (i / Math.max(temps.length - 1, 1)) * xSpan;
+    const y = h - padB - ((t - min) / range) * ySpan;
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="rgba(80,213,255,.95)"><title>${t.toFixed(1)}°C</title></circle>`;
+  }).join("");
+
+  const yGrid = yTicks.map(v => {
+    const y = h - padB - ((v - min) / range) * ySpan;
     return `
-      <div class="market-row">
-        <div class="row-top">
-          <span>${esc(city.flag)} ${esc(city.label)}</span>
-          <span class="market-favorite">${best.ask === null || best.ask === undefined ? "—" : `${Math.round(best.ask * 100)}¢`}</span>
-        </div>
-        <div class="market-local-time">${esc(city.local_hm || "--:--")} · ${esc(city.timezone || "")}</div>
-        <div class="row-sub">
-          <span>${esc(best.label || "—")}</span>
-          <span>${city.market.volume ? `$${Math.round(city.market.volume).toLocaleString("en-US")}` : "sem vol"}</span>
-        </div>
-        <div class="row-sub">
-          <span>${esc(fc)}</span>
-          <span></span>
-        </div>
-        <div class="mini-prob">
-          <span>P(pico)</span>
-          <div class="mini-bar"><div style="width:${Math.min(100, pRaw * 100)}%"></div></div>
-          <strong>${p}</strong>
-        </div>
-      </div>
+      <line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,.12)" />
+      <text x="${padL - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="rgba(255,255,255,.72)" font-size="11">${intTemp(v)}°</text>
     `;
   }).join("");
+
+  return `
+    <svg class="temp-chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
+      <rect x="0" y="0" width="${w}" height="${h}" fill="transparent" />
+      ${yGrid}
+      <line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" stroke="rgba(255,255,255,.22)" />
+      <polyline points="${pts}" fill="none" stroke="rgba(80,213,255,.9)" stroke-width="2.4" />
+      ${dots}
+      <text x="${padL}" y="${h - 6}" fill="rgba(255,255,255,.6)" font-size="11">${xLabelL}</text>
+      <text x="${w - padR}" y="${h - 6}" text-anchor="end" fill="rgba(255,255,255,.6)" font-size="11">${xLabelR}</text>
+      <text x="${padL}" y="${padT + 2}" fill="rgba(255,255,255,.86)" font-size="12">max ${intTemp(max)}°</text>
+    </svg>
+  `;
+}
+
+function bracketChart(city) {
+  const rows = ((city.market && city.market.brackets) || [])
+    .slice()
+    .map(r => {
+      const vol = Number(r.volume || 0);
+      const ask = Number(r.ask || 0);
+      const weight = vol > 0 ? vol : ask * 1000; // fallback visual quando volume não vem no snapshot
+      return { ...r, _weight: weight };
+    })
+    .sort((a, b) => Number(a.temp_lo ?? 0) - Number(b.temp_lo ?? 0))
+    .slice(0, 12);
+  if (!rows.length) return `<div class="empty">Sem brackets para esta cidade.</div>`;
+  const rmax = Number(city.running_max);
+  const wuFc = Number(city.wu_forecast);
+  const hasRmax = Number.isFinite(rmax);
+  const hasWu = Number.isFinite(wuFc);
+  const maxVol = Math.max(...rows.map(r => Number(r._weight || 0)), 1);
+  return `<div class="bracket-chart">${rows.map(r => {
+    const width = Math.max(3, Math.round((Number(r._weight || 0) / maxVol) * 100));
+    const lo = Number(r.temp_lo);
+    const hi = Number(r.temp_hi);
+    const inRmax = hasRmax && Number.isFinite(lo) && Number.isFinite(hi) && rmax >= lo && rmax < hi;
+    const inWu = hasWu && Number.isFinite(lo) && Number.isFinite(hi) && wuFc >= lo && wuFc < hi;
+    const rowClass = `${inRmax ? " current-max" : ""}${inWu ? " wu-forecast" : ""}`;
+    return `
+      <div class="br-row${rowClass}">
+        <div class="br-label">${esc(r.label || "—")}</div>
+        <div class="br-bar"><div style="width:${width}%"></div></div>
+        <div class="br-ask">${r.ask == null ? "—" : `${Math.round(Number(r.ask) * 100)}¢`}</div>
+        <div class="br-vol">${r.volume ? Math.round(Number(r.volume)).toLocaleString("en-US") : "0"}</div>
+      </div>
+    `;
+  }).join("")}</div>`;
+}
+
+function renderDetail(data) {
+  const holder = document.getElementById("city-detail");
+  const cities = data.cities || [];
+  let city = cities.find(c => c.name === state.selectedCity);
+  if (!city && cities.length) {
+    city = activeWatchRows(cities)[0] || cities[0];
+    state.selectedCity = city ? city.name : null;
+  }
+  if (!city) {
+    holder.innerHTML = `<div class="empty">Sem cidade selecionada.</div>`;
+    document.getElementById("selected-city").textContent = "Nenhuma";
+    return;
+  }
+  document.getElementById("selected-city").textContent = city.label || city.name;
+
+  const target = city.target_bracket || {};
+  const pos = city.position || (city.positions_all && city.positions_all[0]) || null;
+  const sourceSlots = chartSlotsForCity(city);
+  const sourceSet = new Set(sourceSlots.map(s => String(s.source || "")).filter(Boolean));
+  let sourceLabel = "—";
+  if (sourceSet.size === 1) sourceLabel = [...sourceSet][0];
+  if (sourceSet.size > 1) sourceLabel = [...sourceSet].join(" + ");
+  if (sourceSlots.length && sourceSlots.every(s => isWuSource(s.source))) {
+    sourceLabel = "WU station endpoint";
+  }
+  const pRaw = Number(city.p_ensemble || 0);
+  const pPct = Math.max(0, Math.min(100, Math.round(pRaw * 100)));
+  holder.innerHTML = `
+    <div class="detail-layout">
+      <div class="detail-left">
+        <article class="detail-card">
+          <h3>${esc(city.flag || "🌍")} ${esc(city.label || city.name)} · ${esc(city.local_hm || "--:--")}</h3>
+          <div class="detail-grid">
+            <div class="detail-item"><span>Status</span><strong>${esc(city.status || "—")}</strong></div>
+            <div class="detail-item"><span>P(pico)</span><strong>${fmtPct(city.p_ensemble || 0)}</strong></div>
+            <div class="detail-item"><span>Fonte</span><strong>${esc(sourceLabel)}</strong></div>
+            <div class="detail-item"><span>Timezone</span><strong>${esc(city.timezone || "—")}</strong></div>
+            <div class="detail-item"><span>Temp atual</span><strong>${fmtTemp(city.temp)}</strong></div>
+            <div class="detail-item"><span>RMax</span><strong>${fmtTemp(city.running_max)}</strong></div>
+            <div class="detail-item"><span>Target bracket</span><strong>${target.label ? esc(target.label) : "—"}</strong></div>
+            <div class="detail-item"><span>Target ask</span><strong>${target.ask == null ? "—" : `${Math.round(Number(target.ask) * 100)}¢`}</strong></div>
+            <div class="detail-item"><span>Posição</span><strong>${pos ? "ABERTA" : "SEM POSIÇÃO"}</strong></div>
+            <div class="detail-item"><span>PnL dia</span><strong class="${Number(city.daily_pnl || 0) >= 0 ? "money-pos" : "money-neg"}">${fmtMoney(city.daily_pnl || 0)}</strong></div>
+          </div>
+        </article>
+      </div>
+      <div class="detail-right">
+        <article class="detail-card">
+          <h3>Temperatura (slots do dia)</h3>
+          <div class="prob-hero">
+            <div class="prob-hero-top">
+              <span>P(pico)</span>
+              <strong>${pPct}%</strong>
+            </div>
+            <div class="prob-hero-bar"><div style="width:${pPct}%"></div></div>
+          </div>
+          <div class="chart-wrap">${tempChart(city)}</div>
+        </article>
+        <article class="detail-card">
+          <h3>Brackets e Volume (Top 12)</h3>
+          <div class="chart-wrap">${bracketChart(city)}</div>
+        </article>
+      </div>
+    </div>
+  `;
 }
 
 async function refresh() {
@@ -278,13 +357,12 @@ async function refresh() {
     const response = await fetch("/api/snapshot", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    state.lastSeen = Date.now();
     badge.textContent = "ONLINE";
     badge.className = "pill ok";
     renderMetrics(data);
-    renderCities(data);
+    renderWatchlist(data);
     renderPositions(data);
-    renderMarkets(data);
+    renderDetail(data);
   } catch (error) {
     badge.textContent = "OFFLINE";
     badge.className = "pill bad";
