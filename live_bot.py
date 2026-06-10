@@ -1241,6 +1241,17 @@ def main():
 
     print()
     print(f"{DIM}Loop iniciado — Ctrl+C para parar{R}")
+    
+    # Inicializar polling do Telegram Bot com menu interativo
+    tg = _get_tg()
+    if tg:
+        try:
+            # Passar os estados dos bots para o menu
+            tg.start_polling(bot_states=states)
+            print(f"  {C['green']}✓ Menu interativo do Telegram ativado{R}")
+        except Exception as e:
+            print(f"  {C['yellow']}! Falha ao iniciar polling do Telegram: {e}{R}")
+    
     print()
 
     city_bankrolls  = {}
@@ -1467,6 +1478,16 @@ def main():
     except KeyboardInterrupt:
         print()
         print(f"{C['yellow']}Interruptido pelo utilizador{R}")
+        
+        # Parar polling do Telegram Bot
+        tg = _get_tg()
+        if tg and tg.polling_active:
+            try:
+                tg.stop_polling()
+                print(f"  {C['green']}✓ Polling do Telegram parado{R}")
+            except Exception as e:
+                print(f"  {C['yellow']}! Erro ao parar polling: {e}{R}")
+        
         print(f"  A guardar estatísticas...")
         for city_name, state in states.items():
             city_today = city_date(state.city)

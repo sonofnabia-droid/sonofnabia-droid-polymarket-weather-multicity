@@ -1,27 +1,38 @@
 """
-tg.py — Telegram notifier para o munich_live_bot
-==================================================
+tg.py — Telegram Bot com menu interativo e notificações
+=======================================================
 Suporta:
-  - Início/paragem do bot
-  - Detecção de pico, ordens colocadas/falhadas
-  - Stop-loss (NOVO 2026-04 — vende posição se temp > bracket+1°C)
-  - Resolução de posições com PnL
-  - Resumo diário e dashboard periódico (30 em 30 min)
-  - Mudança de zona de probabilidade
+  - Menu interativo com comandos: /menu, /resumo, /posicoes, /ultimas, /status
+  - Notificações proativas de trading (ordens, stop-loss, resoluções)
+  - Dashboard periódico multi-cidade
+  - Resumo diário com estatísticas detalhadas
+  - Detecção de pico e mudança de zona de probabilidade
 
 Variáveis de ambiente:
-    TELEGRAM_TOKEN=...
+    TELEGRAM_TOKEN=***
     TELEGRAM_CHAT_ID=...
+
+Comandos disponíveis:
+  /menu - Mostra menu interativo com botões
+  /resumo - Resumo do dia: PnL, nº de apostas, % win rate
+  /posicoes - Posições abertas atuais
+  /ultimas - Últimas 5 vitórias
+  /status - Status do bot em todas as cidades
 
 Notas (2026-04):
   - Modelo LightGBM puro: removidas referências a XGB e z-score nos alertas
   - Stop-loss adicionado em alert_stop_loss_triggered
   - UX refinada: mensagens mais concisas, emojis consistentes, formatação clara
+  - Suporte a botões inline para melhor experiência do usuário
 """
 
 import os
+import json
 import requests
-from datetime import datetime
+import threading
+from datetime import datetime, date
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 try:
     from dotenv import load_dotenv
@@ -29,37 +40,378 @@ try:
 except Exception:
     pass
 
+# Importações para Telegram Bot
+try:
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+    from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+    print("[TG] python-telegram-bot não instalado - modo compatibilidade")
+
 
 class TG:
-    """Wrapper para Telegram Bot API com alertas estruturados."""
+    """Telegram Bot com menu interativo e notificações de trading."""
 
     def __init__(self):
-        self.token   = os.environ.get("TELEGRAM_TOKEN", "")
+        self.token = os.environ.get("TELEGRAM_TOKEN", "")
         self.chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
         self.enabled = bool(self.token and self.chat_id)
         self._last_p_zone = -1
+        self.updater = None
+        self.polling_active = False
+        
         if not self.enabled:
             print("  [TG] TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não definidos — "
                   "notificações desactivadas")
+        elif TELEGRAM_AVAILABLE:
+            print("  [TG] Bot com menu interativo inicializado")
+        else:
+            print("  [TG] Modo compatibilidade - apenas envio de mensagens")
+
+    def start_polling(self, bot_states: Dict = None) -> bool:
+        """Inicia polling para receber comandos do usuário."""
+        if not self.enabled or not TELEGRAM_AVAILABLE:
+            return False
+        
+        try:
+            self.updater = Updater(token=self.token)
+            dispatcher = self.updater.dispatcher
+            
+            # Armazenar estados do bot para acesso nos handlers
+            self.bot_states = bot_states or {}
+            
+            # Adicionar handlers de comandos
+            dispatcher.add_handler(CommandHandler("menu", self._cmd_menu))
+            dispatcher.add_handler(CommandHandler("resumo", self._cmd_summary))
+            dispatcher.add_handler(CommandHandler("posicoes", self._cmd_positions))
+            dispatcher.add_handler(CommandHandler("ultimas", self._cmd_recent_wins))
+            dispatcher.add_handler(CommandHandler("status", self._cmd_status))
+            
+            # Adicionar handler para botões inline
+            dispatcher.add_handler(CallbackQueryHandler(self._handle_button))
+            
+            # Iniciar polling em thread separada
+            threading.Thread(target=self.updater.start_polling, 
+                           kwargs={"poll_interval": 1.0}, 
+                           daemon=True).start()
+            
+            self.polling_active = True
+            print("  [TG] Polling iniciado - bot pode receber comandos")
+            return True
+            
+        except Exception as e:
+            print(f"  [TG] Erro ao iniciar polling: {e}")
+            return False
+
+    def stop_polling(self):
+        """Para o polling."""
+        if self.updater and self.polling_active:
+            self.updater.stop()
+            self.polling_active = False
+            print("  [TG] Polling parado")
+
+    def _cmd_menu(self, update: Update, context: CallbackContext):
+        """Handler para /menu - mostra menu interativo."""
+        keyboard = [
+            [InlineKeyboardButton("📊 Resumo Hoje", callback_data='resumo_hoje')],
+            [InlineKeyboardButton("📂 Posições Abertas", callback_data='posicoes_abertas')],
+            [InlineKeyboardButton("🏆 Últimas Ganhas", callback_data='ultimas_ganhadas')],
+            [InlineKeyboardButton("⚙️ Status Bot", callback_data='status_bot')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        update.message.reply_text(
+            "🤖 <b>Menu do Bot</b>\n\n"
+            "Escolha uma opção para ver detalhes:",
+            reply_markup=reply_markup
+        )
+
+    def _cmd_summary(self, update: Update, context: CallbackContext):
+        """Handler para /resumo - mostra resumo do dia."""
+        try:
+            summary = self._generate_daily_summary()
+            update.message.reply_text(summary, parse_mode="HTML")
+        except Exception as e:
+            update.message.reply_text(f"❌ Erro ao gerar resumo: {str(e)}")
+
+    def _cmd_positions(self, update: Update, context: CallbackContext):
+        """Handler para /posicoes - mostra posições abertas."""
+        try:
+            positions = self._get_open_positions()
+            update.message.reply_text(positions, parse_mode="HTML")
+        except Exception as e:
+            update.message.reply_text(f"❌ Erro ao obter posições: {str(e)}")
+
+    def _cmd_recent_wins(self, update: Update, context: CallbackContext):
+        """Handler para /ultimas - mostra últimas vitórias."""
+        try:
+            wins = self._get_recent_wins()
+            update.message.reply_text(wins, parse_mode="HTML")
+        except Exception as e:
+            update.message.reply_text(f"❌ Erro ao obter vitórias: {str(e)}")
+
+    def _cmd_status(self, update: Update, context: CallbackContext):
+        """Handler para /status - mostra status do bot."""
+        try:
+            status = self._get_bot_status()
+            update.message.reply_text(status, parse_mode="HTML")
+        except Exception as e:
+            update.message.reply_text(f"❌ Erro ao obter status: {str(e)}")
+
+    def _handle_button(self, update: Update, context: CallbackContext):
+        """Handler para botões inline."""
+        query = update.callback_query
+        query.answer()
+        
+        if query.data == 'resumo_hoje':
+            summary = self._generate_daily_summary()
+            query.edit_message_text(summary, parse_mode="HTML")
+        elif query.data == 'posicoes_abertas':
+            positions = self._get_open_positions()
+            query.edit_message_text(positions, parse_mode="HTML")
+        elif query.data == 'ultimas_ganhadas':
+            wins = self._get_recent_wins()
+            query.edit_message_text(wins, parse_mode="HTML")
+        elif query.data == 'status_bot':
+            status = self._get_bot_status()
+            query.edit_message_text(status, parse_mode="HTML")
+
+    def _generate_daily_summary(self) -> str:
+        """Gera resumo do dia a partir dos logs."""
+        try:
+            from trade_ledger import read_events
+            from pathlib import Path
+            
+            today = date.today().isoformat()
+            events = read_events()
+            
+            # Filtrar eventos de hoje
+            today_events = [e for e in events if e.get('date') == today]
+            
+            if not today_events:
+                return "📅 <b>Resumo de Hoje</b>\n\n💤 Sem trades hoje."
+            
+            # Calcular estatísticas
+            total_trades = len(today_events)
+            total_invested = sum(e.get('size_usdc', 0) for e in today_events)
+            total_pnl = sum(e.get('pnl', 0) for e in today_events)
+            
+            # Calcular win rate
+            wins = sum(1 for e in today_events if e.get('pnl', 0) > 0)
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+            
+            roi = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+            
+            # Formatar mensagem
+            lines = [
+                f"📊 <b>Resumo de Hoje</b> — {today}",
+                "",
+                f"  🎯 Trades: <b>{total_trades}</b>",
+                f"  💰 Investido: <b>${total_invested:.2f}</b>",
+                f"  📈 PnL: <b>${total_pnl:+.2f}</b> ({roi:+.1f}%)",
+                f"  🏆 Win Rate: <b>{win_rate:.1f}%</b> ({wins}/{total_trades})",
+                "",
+                "<b>Detalhes dos trades:</b>"
+            ]
+            
+            # Adicionar detalhes de cada trade
+            for i, event in enumerate(today_events[:5]):  # Mostrar até 5 trades
+                city = event.get('city', 'Unknown')
+                bracket = event.get('bracket_label', 'Unknown')
+                pnl = event.get('pnl', 0)
+                icon = "✅" if pnl > 0 else "❌"
+                
+                lines.append(
+                    f"  {icon} {city}: {bracket} (${pnl:+.2f})"
+                )
+            
+            if len(today_events) > 5:
+                lines.append(f"  ... e mais {len(today_events) - 5} trades")
+            
+            return "\n".join(lines)
+            
+        except Exception as e:
+            return f"❌ Erro ao gerar resumo: {str(e)}"
+
+    def _get_open_positions(self) -> str:
+        """Obtém posições abertas atuais."""
+        try:
+            from polymarket_clob import PositionStatus
+            from pathlib import Path
+            
+            positions_text = []
+            
+            # Verificar paper positions
+            paper_positions_path = Path("live_bot_logs") / "paper_positions.json"
+            if paper_positions_path.exists():
+                try:
+                    with open(paper_positions_path, 'r') as f:
+                        paper_positions = json.load(f)
+                    
+                    for pos in paper_positions:
+                        if pos.get('status') == 'open':
+                            city = pos.get('city', 'Unknown')
+                            bracket = pos.get('bracket_label', 'Unknown')
+                            entry_ask = pos.get('ask', 0)
+                            size_usdc = pos.get('size_usdc', 0)
+                            
+                            positions_text.append(
+                                f"📂 <b>{city}</b>\n"
+                                f"  🎯 {bracket}\n"
+                                f"  💵 Entrada: {entry_ask*100:.1f}¢\n"
+                                f"  🏦 Size: ${size_usdc:.2f}\n"
+                            )
+                except Exception as e:
+                    positions_text.append(f"❌ Erro ao ler paper positions: {str(e)}")
+            
+            # Verificar real positions
+            real_positions_path = Path("live_bot_logs") / "real_positions.json"
+            if real_positions_path.exists():
+                try:
+                    with open(real_positions_path, 'r') as f:
+                        real_positions = json.load(f)
+                    
+                    for pos in real_positions:
+                        if pos.get('status') == 'open':
+                            city = pos.get('city', 'Unknown')
+                            bracket = pos.get('bracket_label', 'Unknown')
+                            entry_ask = pos.get('ask', 0)
+                            size_usdc = pos.get('size_usdc', 0)
+                            
+                            positions_text.append(
+                                f"💰 <b>{city}</b>\n"
+                                f"  🎯 {bracket}\n"
+                                f"  💵 Entrada: {entry_ask*100:.1f}¢\n"
+                                f"  🏦 Size: ${size_usdc:.2f}\n"
+                            )
+                except Exception as e:
+                    positions_text.append(f"❌ Erro ao ler real positions: {str(e)}")
+            
+            if not positions_text:
+                return "📂 <b>Posições Abertas</b>\n\n✅ Sem posições abertas no momento."
+            
+            header = "📂 <b>Posições Abertas</b>\n\n"
+            return header + "\n".join(positions_text)
+            
+        except Exception as e:
+            return f"❌ Erro ao obter posições: {str(e)}"
+
+    def _get_recent_wins(self) -> str:
+        """Obtém últimas 5 vitórias."""
+        try:
+            from trade_ledger import read_events
+            from pathlib import Path
+            
+            events = read_events()
+            
+            # Filtrar vitórias (pnl > 0) e ordenar por data
+            wins = [
+                e for e in events 
+                if e.get('pnl', 0) > 0 and e.get('status') == 'won'
+            ]
+            wins.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            recent_wins = wins[:5]
+            
+            if not recent_wins:
+                return "🏆 <b>Últimas Vitórias</b>\n\n💤 Sem vitórias recentes."
+            
+            lines = [
+                "🏆 <b>Últimas 5 Vitórias</b>",
+                ""
+            ]
+            
+            for i, win in enumerate(recent_wins, 1):
+                city = win.get('city', 'Unknown')
+                bracket = win.get('bracket_label', 'Unknown')
+                entry_ask = win.get('ask', 0)
+                pnl = win.get('pnl', 0)
+                timestamp = win.get('timestamp', '')
+                
+                # Extrair data do timestamp
+                if 'T' in timestamp:
+                    date_str = timestamp.split('T')[0]
+                else:
+                    date_str = timestamp[:10]
+                
+                lines.append(
+                    f"🥇 {i}. <b>{city}</b> — {date_str}\n"
+                    f"   🎯 {bracket}\n"
+                    f"   💵 Entrada: {entry_ask*100:.1f}¢\n"
+                    f"   📈 PnL: <b>+${pnl:.2f}</b>\n"
+                )
+            
+            return "\n".join(lines)
+            
+        except Exception as e:
+            return f"❌ Erro ao obter vitórias: {str(e)}"
+
+    def _get_bot_status(self) -> str:
+        """Obtém status do bot em todas as cidades."""
+        try:
+            if not hasattr(self, 'bot_states') or not self.bot_states:
+                return "⚙️ <b>Status do Bot</b>\n\n❌ Estados do bot não disponíveis."
+            
+            lines = [
+                "⚙️ <b>Status do Bot</b>",
+                ""
+            ]
+            
+            for city_name, state in self.bot_states.items():
+                if hasattr(state, 'daily_stats'):
+                    stats = state.daily_stats
+                    trades_count = len(getattr(stats, 'trades', []))
+                    daily_pnl = getattr(stats, 'daily_pnl', 0.0)
+                    
+                    icon = "🟢" if daily_pnl >= 0 else "🔴"
+                    lines.append(
+                        f"{icon} <b>{city_name}</b>\n"
+                        f"   📊 Trades: {trades_count}\n"
+                        f"   💰 PnL: ${daily_pnl:+.2f}\n"
+                    )
+                else:
+                    lines.append(f"⚪ <b>{city_name}</b>\n   📊 Status: desconhecido\n")
+            
+            lines.append("")
+            lines.append("🤖 Bot está ativo e monitorando as cidades.")
+            
+            return "\n".join(lines)
+            
+        except Exception as e:
+            return f"❌ Erro ao obter status: {str(e)}"
 
     def send(self, text: str) -> bool:
         """Envia mensagem; devolve True se sucesso."""
         if not self.enabled:
             return False
-        try:
-            r = requests.post(
-                f"https://api.telegram.org/bot{self.token}/sendMessage",
-                json={"chat_id": self.chat_id, "text": text,
-                      "parse_mode": "HTML",
-                      "disable_web_page_preview": True},
-                timeout=10,
-            )
-            if r.status_code != 200:
-                print(f"  [TG] sendMessage falhou: HTTP {r.status_code} — {r.text[:200]}")
+        
+        # Modo compatibilidade - sem telegram.ext
+        if not TELEGRAM_AVAILABLE:
+            try:
+                r = requests.post(
+                    f"https://api.telegram.org/bot{self.token}/sendMessage",
+                    json={"chat_id": self.chat_id, "text": text,
+                          "parse_mode": "HTML",
+                          "disable_web_page_preview": True},
+                    timeout=10,
+                )
+                if r.status_code != 200:
+                    print(f"  [TG] sendMessage falhou: HTTP {r.status_code} — {r.text[:200]}")
+                    return False
+                return True
+            except Exception as e:
+                print(f"  [TG] sendMessage exception: {e}")
                 return False
+        
+        # Modo com telegram.ext
+        try:
+            from telegram import Bot
+            bot = Bot(token=self.token)
+            bot.send_message(chat_id=self.chat_id, text=text, 
+                           parse_mode="HTML", disable_web_page_preview=True)
             return True
         except Exception as e:
-            print(f"  [TG] sendMessage exception: {e}")
+            print(f"  [TG] send_message exception: {e}")
             return False
 
     # ══════════════════════════════════════════════════════
