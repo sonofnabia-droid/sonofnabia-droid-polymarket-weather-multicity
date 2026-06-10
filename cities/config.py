@@ -55,6 +55,7 @@ class CityConfig:
     extra_features: list[str]            # Features específicas da cidade
     threshold: Optional[float]           # Threshold (fallback — runtime usa JSON)
     hour_min: Optional[int]              # Hora mínima (fallback — runtime usa JSON)
+    market_unit: str = "celsius"         # Unidade no Polymarket (celsius/fahrenheit)
     day_start: int = 6                   # Hora início do dia (hora local)
     day_end: int = 21                    # Hora fim do dia (hora local)
     bot_timezone: str = "Europe/Lisbon"  # Timezone do bot (CASSIOPEIA = Lisboa)
@@ -127,6 +128,7 @@ CITIES = {
         extra_features=[],
         threshold=None,
         hour_min=None,
+        market_unit="fahrenheit",
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 13.0, 2: 16.0, 3: 21.0, 4: 26.0, 5: 30.0, 6: 34.0,
@@ -305,6 +307,7 @@ CITIES = {
         extra_features=[],
         threshold=None,
         hour_min=None,
+        market_unit="fahrenheit",
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 25.0, 2: 26.0, 3: 28.0, 4: 29.0, 5: 31.0, 6: 32.0,
@@ -430,6 +433,7 @@ CITIES = {
         extra_features=[],
         threshold=None,
         hour_min=None,
+        market_unit="fahrenheit",
         bot_timezone="Europe/Lisbon",
         climatology={
             1: -1.0, 2: 1.0,  3: 7.0,  4: 14.0, 5: 20.0, 6: 26.0,
@@ -511,6 +515,7 @@ CITIES = {
         extra_features=[],
         threshold=None,
         hour_min=None,
+        market_unit="fahrenheit",
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 19.0, 2: 22.0, 3: 26.0, 4: 31.0, 5: 36.0, 6: 41.0,
@@ -535,6 +540,7 @@ CITIES = {
         extra_features=[],
         threshold=None,
         hour_min=None,
+        market_unit="fahrenheit",
         bot_timezone="Europe/Lisbon",
         climatology={
             1: 13.0, 2: 17.0, 3: 22.0, 4: 27.0, 5: 33.0, 6: 39.0,

@@ -167,13 +167,18 @@ class TG:
         p_ens    = bet.get("p_ensemble")
         rmax     = bet.get("running_max")
 
-        if profit is None:
+        if profit is None or (isinstance(profit, float) and profit <= 0.0001):
             try:
-                ask_f = float(ask or 0.0)
-                shares_f = float(shares or 0.0)
-                if ask_f > 0 and shares_f > 0:
+                ask_f = float(ask if ask is not None else 0.0)
+                shares_f = float(shares if shares is not None else 0.0)
+                if 0.0 < ask_f < 1.0 and shares_f > 0:
                     # Lucro máximo bruto se resolver YES em 1.00.
+                    # Ex: ask 0.10, shares 50 -> profit = (1.0 - 0.10) * 50 = 45.0
                     profit = max(0.0, (1.0 - ask_f) * shares_f)
+                elif ask_f >= 1.0 and shares_f > 0:
+                    # Se ask_f >= 1.0, provavelmente está em cêntimos (ex: 10.0 para 10¢)
+                    ask_norm = ask_f / 100.0
+                    profit = max(0.0, (1.0 - ask_norm) * shares_f)
                 else:
                     profit = 0.0
             except Exception:
@@ -367,18 +372,27 @@ class TG:
             lines.append(f"  ⏳ Posições abertas: {s['n_open']}")
         return self.send("\n".join(lines))
 
-    def alert_zone_change(self, p, zone):
-        """Probabilidade mudou de zona (notifica só na transição)."""
-        icons  = {0: "⚪", 1: "🟠", 2: "🟡", 3: "🟢"}
-        labels = {0: "abaixo de 30%",
-                  1: "30-60% — atenção",
-                  2: "60-80% — forte",
-                  3: "≥ 80% — muito forte"}
-        return self.send(
-            f"{icons.get(zone, '⚪')} <b>P(pico) entrou em nova zona</b>\n"
-            f"  Agora: <b>{p*100:.0f}%</b>  "
-            f"<i>({labels.get(zone, '?')})</i>"
-        )
+    def alert_multi_city_summary(self, mode_str, total_pnl, n_trades, cities_data):
+        """Resumo consolidado de todas as cidades."""
+        mode_icon = "🟢" if mode_str == "REAL" else "🟡"
+        pnl_icon = "📈" if total_pnl >= 0 else "📉"
+        
+        lines = [
+            f"{mode_icon} <b>Relatório Multi-Cidade</b> — {datetime.now().strftime('%H:%M')}",
+            f"  Modo: <b>{mode_str}</b>",
+            f"  Apostas hoje: <b>{n_trades}</b>",
+            f"  {pnl_icon} P&L Total: <b>${total_pnl:+.2f}</b>",
+            "",
+            "<b>Top Cidades (PnL):</b>"
+        ]
+        
+        # Ordenar cidades por PnL e mostrar top 5
+        top_cities = sorted(cities_data, key=lambda x: x['pnl'], reverse=True)
+        for c in top_cities[:8]:
+            c_icon = "✅" if c['pnl'] > 0 else ("❌" if c['pnl'] < 0 else "⚪")
+            lines.append(f"  {c_icon} {c['name'].title()}: <b>${c['pnl']:+.2f}</b>")
+            
+        return self.send("\n".join(lines))
 
     # ══════════════════════════════════════════════════════
     #  DETECÇÃO DE ZONA

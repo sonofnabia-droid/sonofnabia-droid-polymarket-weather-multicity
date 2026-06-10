@@ -1082,7 +1082,8 @@ def _parse_city_list(cities_arg: str | None, fallback_city: str) -> list[str]:
     if not cities_arg:
         return [fallback_city]
     if cities_arg.strip().lower() == "all":
-        return list(CITIES.keys())
+        # Filtrar apenas as cidades em Celsius no Polymarket
+        return [cfg.name for cfg in CITIES.values() if cfg.market_unit == "celsius"]
 
     city_names = [c.strip().lower() for c in cities_arg.split(",") if c.strip()]
     unknown = [c for c in city_names if c not in CITIES]

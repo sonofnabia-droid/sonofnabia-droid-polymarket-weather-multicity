@@ -334,12 +334,15 @@ def main():
 
     # Cidades alvo
     if args.cities:
-        city_names = [c.strip().lower() for c in args.cities.split(",")]
-        for cn in city_names:
-            if cn not in CITIES:
-                _console.print(f"[red]Erro: cidade desconhecida '{cn}'. "
-                               f"Disponíveis: {list(CITIES.keys())}[/red]")
-                return
+        if args.cities.lower() == "all":
+            city_names = [cfg.name for cfg in CITIES.values() if cfg.market_unit == "celsius"]
+        else:
+            city_names = [c.strip().lower() for c in args.cities.split(",")]
+            for cn in city_names:
+                if cn not in CITIES:
+                    _console.print(f"[red]Erro: cidade desconhecida '{cn}'. "
+                                   f"Disponíveis: {list(CITIES.keys())}[/red]")
+                    return
     else:
         city_names = list(CITIES.keys())
 

@@ -1,9 +1,9 @@
 {
   "single": {
-    "threshold": 0.36,
-    "hour_min": 8,
+    "threshold": 0.65,
+    "hour_min": 11,
     "stop_loss_delta": 1.0,
-    "min_buy_ask": 0.2,
+    "min_buy_ask": 0.15,
     "max_buy_ask": 0.85
   },
   "_meta": {

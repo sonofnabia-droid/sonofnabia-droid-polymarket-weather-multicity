@@ -51,13 +51,13 @@ class SingleEntry:
             kwargs.get("threshold")
             or threshold
             or city_config.threshold
-            or 0.775
+            or 0.65
         )
         self.hour_min = (
             kwargs.get("hour_min")
             or hour_min
             or city_config.hour_min
-            or 10
+            or 11
         )
         self.stop_loss_delta = (
             kwargs.get("stop_loss_delta")
@@ -67,7 +67,7 @@ class SingleEntry:
         self.min_buy_ask = (
             kwargs.get("min_buy_ask")
             or min_buy_ask
-            or 0.20
+            or 0.15
         )
         self.max_buy_ask = (
             kwargs.get("max_buy_ask")
@@ -81,7 +81,8 @@ class SingleEntry:
         self.strategy_used: str | None = None
 
     def evaluate(self, p_ensemble: float, hour: int, market: dict | None,
-                 running_max: float, forecast_agreement: dict | None) -> list[dict]:
+                 running_max: float, forecast_agreement: dict | None,
+                 slots_so_far: list[dict] | None = None) -> list[dict]:
         if self.bought:
             return [{
                 "parcel_idx": 0,
@@ -99,6 +100,20 @@ class SingleEntry:
                 "model_ok": None,
                 "market_ok": None,
             }]
+
+        # --- FILTRO DE ESTABILIDADE (PLATEAU) ---
+        if slots_so_far and len(slots_so_far) >= 2:
+            # Pegar as temperaturas dos últimos 30 minutos (últimos 2 slots)
+            temps = [s["temp_c"] for s in slots_so_far[-2:]]
+            delta_30m = temps[-1] - temps[0]
+            if delta_30m > 0.2:
+                return [{
+                    "parcel_idx": 0,
+                    "size_usdc": 0,
+                    "reason": f"SINGLE: temp ainda a subir ({delta_30m:+.2f}°C em 30m > +0.20°C). À espera de plateau.",
+                    "model_ok": True,
+                    "market_ok": None,
+                }]
 
         if p_ensemble >= self.threshold:
             bracket = self._select_target_bracket(market, running_max) if market else None

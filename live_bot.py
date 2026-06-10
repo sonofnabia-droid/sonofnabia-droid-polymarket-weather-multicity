@@ -185,15 +185,26 @@ class PolymarketFetcher:
         }
 
     def _extract_temp(self, text: str) -> Optional[float]:
-        """Extrai temperatura de um label."""
+        """Extrai temperatura de um label, convertendo Fahrenheit para Celsius se necessário."""
         import re
+        # 1. Tentar detectar Celsius explicitamente
+        m_c = re.search(r"([-]?\d+(?:\.\d+)?)\s*°?\s*[cC]\b", str(text), re.IGNORECASE)
+        if m_c:
+            return float(m_c.group(1))
+
+        # 2. Tentar detectar Fahrenheit explicitamente
+        m_f = re.search(r"([-]?\d+(?:\.\d+)?)\s*°?\s*[fF]\b", str(text), re.IGNORECASE)
+        if m_f:
+            f = float(m_f.group(1))
+            return round((f - 32) * 5 / 9, 1)
+
+        # 3. Fallback: outros padrões numéricos
         for pat in [
-            r"([-]?\d+)\s*°?\s*[cC]\b",
-            r"([-]?\d+)\s+or\s+(?:higher|lower|above|below)",
-            r"be\s+([-]?\d+)",
-            r"between\s+([-]?\d+)\s+and",
-            r"([-]?\d+)\s*[-–]\s*\d+",
-            r"^\s*([-]?\d+)\s*$",
+            r"([-]?\d+(?:\.\d+)?)\s+or\s+(?:higher|lower|above|below)",
+            r"be\s+([-]?\d+(?:\.\d+)?)",
+            r"between\s+([-]?\d+(?:\.\d+)?)\s+and",
+            r"([-]?\d+(?:\.\d+)?)\s*[-–]\s*\d+",
+            r"^\s*([-]?\d+(?:\.\d+)?)\s*$",
         ]:
             m = re.search(pat, str(text), re.IGNORECASE)
             if m:
@@ -213,18 +224,16 @@ class PolymarketFetcher:
         return 99.0 if any(x in s for x in ("or higher", "or above", ">=", "≥")) else v
 
     def _normalize_label(self, text: str) -> str:
-        """Normaliza o label do bracket."""
-        if len(text) <= 25:
-            return text
+        """Normaliza o label do bracket, garantindo que exibe Celsius."""
         v = self._extract_temp(text)
         if v is None:
             return text
         s = text.lower()
         if any(x in s for x in ("higher", "above", ">=", "≥")):
-            return f"{v:.0f}°C or higher"
+            return f"{v:.1f}°C or higher"
         if any(x in s for x in ("lower", "below", "<=", "≤")):
-            return f"{v:.0f}°C or lower"
-        return f"{v:.0f}°C"
+            return f"{v:.1f}°C or lower"
+        return f"{v:.1f}°C"
 
     @staticmethod
     def find_bracket(market: dict, temp: float, forecast_max: float = None) -> Optional[dict]:
@@ -857,6 +866,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             market=state.market,
             running_max=running_max,
             forecast_agreement=None,
+            slots_so_far=state.slots_so_far,
         )
 
         # Processar ações (primeira que tenha size > 0)
@@ -1140,8 +1150,14 @@ def main():
     args = parser.parse_args()
 
     raw_city_names = [c.strip() for c in args.cities.split(",") if c.strip()]
-    # Evita cidades duplicadas (ex: "...,karachi,...,karachi") mantendo ordem.
-    city_names = list(dict.fromkeys(raw_city_names))
+    if "all" in [cn.lower() for cn in raw_city_names]:
+        from cities.config import get_all_cities
+        all_configs = get_all_cities()
+        # Filtrar apenas as cidades em Celsius no Polymarket
+        city_names = [cfg.name for cfg in all_configs if cfg.market_unit == "celsius"]
+    else:
+        # Evita cidades duplicadas (ex: "...,karachi,...,karachi") mantendo ordem.
+        city_names = list(dict.fromkeys(raw_city_names))
     trading_mode = TradingMode.REAL if args.run == "real" else TradingMode.PAPER
     is_multi     = len(city_names) > 1
     has_tty = sys.stdout.isatty()
@@ -1268,6 +1284,10 @@ def main():
     session_pnl_cumulative = {cn: 0.0 for cn in city_names}
     session_last_reported_pnl = {cn: 0.0 for cn in city_names}
     session_last_dates = {cn: None for cn in city_names}
+    
+    _tg_last_dashboard = time.time()  # Primeiro dashboard após 1h
+    _tg_dashboard_interval = 60 * 60  # 1 hora
+    _tg_last_summary_date = None
 
     if is_multi:
         try:
@@ -1418,6 +1438,26 @@ def main():
                             trading_mode_str=args.run.upper(),
                             session_stats=session_stats,
                         )
+
+                    # ── TELEGRAM PERIODIC REPORT ──────────────────────────────
+                    now_ts = time.time()
+                    if now_ts - _tg_last_dashboard >= _tg_dashboard_interval:
+                        tg_inst = _get_tg()
+                        if tg_inst:
+                            cities_data = []
+                            for cn in city_names:
+                                ds = daily_stats.get(cn)
+                                pnl = float(getattr(ds, "daily_pnl", 0.0) or 0.0) if ds else 0.0
+                                cities_data.append({"name": cn, "pnl": pnl})
+                            
+                            tg_inst.alert_multi_city_summary(
+                                mode_str=args.run.upper(),
+                                total_pnl=session_stats["total_pnl"],
+                                n_trades=session_stats["total_trades"],
+                                cities_data=cities_data
+                            )
+                        _tg_last_dashboard = now_ts
+
                 except Exception as e:
                     print(f"  {C['red']}Dashboard/snapshot error: {e}{R}")
             # ── single-city: _tick_city já faz os seus próprios prints ─────
