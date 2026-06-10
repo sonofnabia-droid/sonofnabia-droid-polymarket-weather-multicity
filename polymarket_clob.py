@@ -453,12 +453,13 @@ class ClobClient:
 
         if market_slug:
             today = ts[:10]
-            if any(
-                p.status == PositionStatus.OPEN
-                and p.date_opened == today
-                and p.market_slug == market_slug
-                for p in self.positions.open_positions()
-            ):
+            # Verificar se já existe posição aberta para este mercado hoje
+            existing_position = next(
+                (p for p in self.positions.open_positions() 
+                 if p.market_slug == market_slug and p.date_opened == today),
+                None
+            )
+            if existing_position:
                 return OrderResult(
                     success=False, mode=self.mode,
                     error=f"Posição já aberta para {market_slug} hoje.",

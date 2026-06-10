@@ -760,11 +760,52 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
             cd = next((c for c in city_data if c.city.name == city_name), None)
             if not cd or not cd.position:
                 continue
+            
+            # Corrigir: usar o preço atual do mercado em vez do ask da posição
             ask = cd.position.get("ask", 0)
+            if ask == 0 or ask == 0.01:
+                # Se o ask for 0 ou 0.01, usar o preço atual do mercado
+                if cd.market:
+                    for bracket in cd.market.get("brackets", []):
+                        if bracket.get("bracket_label") == cd.position.get("bracket"):
+                            ask = bracket.get("ask") or bracket.get("price")
+                            break
+            
             bkt = str(cd.position.get("bracket", "?"))[:18]
+            
+            # Adicionar hora da abertura se disponível
+            entry_time = getattr(cd.position, "entry_time", None)
+            if entry_time:
+                if isinstance(entry_time, str):
+                    if "T" in entry_time:
+                        time_str = entry_time.split("T")[1][:5]  # HH:MM
+                    else:
+                        time_str = entry_time[-5:] if len(entry_time) >= 5 else ""
+                    d_op = f"{date.today().isoformat()} {time_str}"
+                else:
+                    d_op = date.today().isoformat()
+            else:
+                d_op = date.today().isoformat()
+            
+            # Calcular PnL para posições paper
+            current_price = ask  # Para paper trading, usar o preço de entrada
+            size_usdc = cd.position.get("size_usdc", 5.0)
+            if current_price > 0:
+                pnl_u = size_usdc * (current_price - 1.0)  # PnL baseado no preço atual
+                pnl_p = (current_price - 1.0) * 100  # PnL em %
+            else:
+                pnl_u = None
+                pnl_p = None
+            
             tbl_open.add_row(
-                clbl, date.today().isoformat(), bkt,
-                f"{ask*100:.1f}¢", "—", "—", "—", "—",
+                clbl, d_op, bkt,
+                f"{ask*100:.1f}¢" if ask > 0 else "—",
+                f"{current_price*100:.1f}¢" if current_price > 0 else "—",
+                Text(f"{pnl_u:+.2f}$" if pnl_u is not None else "—", 
+                     style="bold green" if pnl_u and pnl_u > 0 else "bold red" if pnl_u and pnl_u < 0 else "dim"),
+                Text(f"{pnl_p:+.1f}%" if pnl_p is not None else "—", 
+                     style="bold green" if pnl_p and pnl_p > 0 else "bold red" if pnl_p and pnl_p < 0 else "dim"),
+                f"{size_usdc:.2f}",
                 Text("📄 PAPER", style="yellow"),
             )
             n_open += 1
