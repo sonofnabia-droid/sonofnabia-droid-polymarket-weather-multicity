@@ -24,6 +24,13 @@ Notas (2026-04):
   - Stop-loss adicionado em alert_stop_loss_triggered
   - UX refinada: mensagens mais concisas, emojis consistentes, formatação clara
   - Suporte a botões inline para melhor experiência do usuário
+
+Notas (2026-06):
+  - Migrado para python-telegram-bot v20+ (API assíncrona)
+  - Updater/dispatcher/CallbackContext substituídos por Application/ContextTypes
+  - Todos os handlers tornados async (obrigatório na v20+)
+  - query.answer() agora com await (fix crítico para botões inline)
+  - send() simplificado para HTTP direto via requests (evita conflitos de event loop)
 """
 
 import os
@@ -40,10 +47,10 @@ try:
 except Exception:
     pass
 
-# Importações para Telegram Bot
+# Importações para Telegram Bot (v20+)
 try:
     from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-    from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+    from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -70,48 +77,55 @@ class TG:
             print("  [TG] Modo compatibilidade - apenas envio de mensagens")
 
     def start_polling(self, bot_states: Dict = None) -> bool:
-        """Inicia polling para receber comandos do usuário."""
+        """Inicia polling para receber comandos do usuário (v20+)."""
         if not self.enabled or not TELEGRAM_AVAILABLE:
             return False
-        
-        try:
-            self.updater = Updater(token=self.token)
-            dispatcher = self.updater.dispatcher
-            
-            # Armazenar estados do bot para acesso nos handlers
-            self.bot_states = bot_states or {}
-            
-            # Adicionar handlers de comandos
-            dispatcher.add_handler(CommandHandler("menu", self._cmd_menu))
-            dispatcher.add_handler(CommandHandler("resumo", self._cmd_summary))
-            dispatcher.add_handler(CommandHandler("posicoes", self._cmd_positions))
-            dispatcher.add_handler(CommandHandler("ultimas", self._cmd_recent_wins))
-            dispatcher.add_handler(CommandHandler("status", self._cmd_status))
-            
-            # Adicionar handler para botões inline
-            dispatcher.add_handler(CallbackQueryHandler(self._handle_button))
-            
-            # Iniciar polling em thread separada
-            threading.Thread(target=self.updater.start_polling, 
-                           kwargs={"poll_interval": 1.0}, 
-                           daemon=True).start()
-            
+
+        self.bot_states = bot_states or {}
+        self._app = None
+
+        async def _run():
+            import asyncio
+            app = Application.builder().token(self.token).build()
+
+            app.add_handler(CommandHandler("menu", self._cmd_menu))
+            app.add_handler(CommandHandler("resumo", self._cmd_summary))
+            app.add_handler(CommandHandler("posicoes", self._cmd_positions))
+            app.add_handler(CommandHandler("ultimas", self._cmd_recent_wins))
+            app.add_handler(CommandHandler("status", self._cmd_status))
+            app.add_handler(CallbackQueryHandler(self._handle_button))
+
+            self._app = app
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(poll_interval=1.0)
             self.polling_active = True
             print("  [TG] Polling iniciado - bot pode receber comandos")
-            return True
-            
-        except Exception as e:
-            print(f"  [TG] Erro ao iniciar polling: {e}")
-            return False
+
+            # Mantém a task viva sem bloquear a thread principal
+            while self.polling_active:
+                await asyncio.sleep(1)
+
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
+
+        def _thread():
+            import asyncio
+            try:
+                asyncio.run(_run())
+            except Exception as e:
+                print(f"  [TG] Erro no polling thread: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+        return True
 
     def stop_polling(self):
         """Para o polling."""
-        if self.updater and self.polling_active:
-            self.updater.stop()
-            self.polling_active = False
-            print("  [TG] Polling parado")
+        self.polling_active = False
+        print("  [TG] Polling parado")
 
-    def _cmd_menu(self, update: Update, context: CallbackContext):
+    async def _cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para /menu - mostra menu interativo."""
         keyboard = [
             [InlineKeyboardButton("📊 Resumo Hoje", callback_data='resumo_hoje')],
@@ -120,62 +134,61 @@ class TG:
             [InlineKeyboardButton("⚙️ Status Bot", callback_data='status_bot')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        update.message.reply_text(
-            "🤖 <b>Menu do Bot</b>\n\n"
-            "Escolha uma opção para ver detalhes:",
-            reply_markup=reply_markup
+        await update.message.reply_text(
+            "🤖 <b>Menu do Bot</b>\n\nEscolha uma opção para ver detalhes:",
+            reply_markup=reply_markup,
+            parse_mode="HTML"
         )
 
-    def _cmd_summary(self, update: Update, context: CallbackContext):
+    async def _cmd_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para /resumo - mostra resumo do dia."""
         try:
             summary = self._generate_daily_summary()
-            update.message.reply_text(summary, parse_mode="HTML")
+            await update.message.reply_text(summary, parse_mode="HTML")
         except Exception as e:
-            update.message.reply_text(f"❌ Erro ao gerar resumo: {str(e)}")
+            await update.message.reply_text(f"❌ Erro ao gerar resumo: {str(e)}")
 
-    def _cmd_positions(self, update: Update, context: CallbackContext):
+    async def _cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para /posicoes - mostra posições abertas."""
         try:
             positions = self._get_open_positions()
-            update.message.reply_text(positions, parse_mode="HTML")
+            await update.message.reply_text(positions, parse_mode="HTML")
         except Exception as e:
-            update.message.reply_text(f"❌ Erro ao obter posições: {str(e)}")
+            await update.message.reply_text(f"❌ Erro ao obter posições: {str(e)}")
 
-    def _cmd_recent_wins(self, update: Update, context: CallbackContext):
+    async def _cmd_recent_wins(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para /ultimas - mostra últimas vitórias."""
         try:
             wins = self._get_recent_wins()
-            update.message.reply_text(wins, parse_mode="HTML")
+            await update.message.reply_text(wins, parse_mode="HTML")
         except Exception as e:
-            update.message.reply_text(f"❌ Erro ao obter vitórias: {str(e)}")
+            await update.message.reply_text(f"❌ Erro ao obter vitórias: {str(e)}")
 
-    def _cmd_status(self, update: Update, context: CallbackContext):
+    async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para /status - mostra status do bot."""
         try:
             status = self._get_bot_status()
-            update.message.reply_text(status, parse_mode="HTML")
+            await update.message.reply_text(status, parse_mode="HTML")
         except Exception as e:
-            update.message.reply_text(f"❌ Erro ao obter status: {str(e)}")
+            await update.message.reply_text(f"❌ Erro ao obter status: {str(e)}")
 
-    def _handle_button(self, update: Update, context: CallbackContext):
+    async def _handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para botões inline."""
         query = update.callback_query
-        query.answer()
-        
-        if query.data == 'resumo_hoje':
-            summary = self._generate_daily_summary()
-            query.edit_message_text(summary, parse_mode="HTML")
-        elif query.data == 'posicoes_abertas':
-            positions = self._get_open_positions()
-            query.edit_message_text(positions, parse_mode="HTML")
-        elif query.data == 'ultimas_ganhadas':
-            wins = self._get_recent_wins()
-            query.edit_message_text(wins, parse_mode="HTML")
-        elif query.data == 'status_bot':
-            status = self._get_bot_status()
-            query.edit_message_text(status, parse_mode="HTML")
+        await query.answer()  # CRÍTICO: deve ser await, senão o botão fica a girar
+
+        dispatch = {
+            'resumo_hoje':      self._generate_daily_summary,
+            'posicoes_abertas': self._get_open_positions,
+            'ultimas_ganhadas': self._get_recent_wins,
+            'status_bot':       self._get_bot_status,
+        }
+        fn = dispatch.get(query.data)
+        if fn:
+            try:
+                await query.edit_message_text(fn(), parse_mode="HTML")
+            except Exception as e:
+                await query.edit_message_text(f"❌ Erro: {str(e)}", parse_mode="HTML")
 
     def _generate_daily_summary(self) -> str:
         """Gera resumo do dia a partir dos logs."""
@@ -381,37 +394,66 @@ class TG:
             return f"❌ Erro ao obter status: {str(e)}"
 
     def send(self, text: str) -> bool:
-        """Envia mensagem; devolve True se sucesso."""
+        """Envia mensagem via HTTP direto (thread-safe, compatível com v20+)."""
+        if not self.enabled:
+            return False
+        try:
+            r = requests.post(
+                f"https://api.telegram.org/bot{self.token}/sendMessage",
+                json={"chat_id": self.chat_id, "text": text,
+                      "parse_mode": "HTML",
+                      "disable_web_page_preview": True},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                print(f"  [TG] sendMessage falhou: HTTP {r.status_code} — {r.text[:200]}")
+                return False
+            return True
+        except Exception as e:
+            print(f"  [TG] sendMessage exception: {e}")
+            return False
+
+    def send_menu(self) -> bool:
+        """Envia o menu interativo com botões inline."""
         if not self.enabled:
             return False
         
-        # Modo compatibilidade - sem telegram.ext
-        if not TELEGRAM_AVAILABLE:
-            try:
-                r = requests.post(
-                    f"https://api.telegram.org/bot{self.token}/sendMessage",
-                    json={"chat_id": self.chat_id, "text": text,
-                          "parse_mode": "HTML",
-                          "disable_web_page_preview": True},
-                    timeout=10,
-                )
-                if r.status_code != 200:
-                    print(f"  [TG] sendMessage falhou: HTTP {r.status_code} — {r.text[:200]}")
-                    return False
-                return True
-            except Exception as e:
-                print(f"  [TG] sendMessage exception: {e}")
-                return False
+        # Criar o menu com botões inline
+        keyboard = [
+            [{"text": "📊 Resumo Hoje", "callback_data": "resumo_hoje"}],
+            [{"text": "📂 Posições Abertas", "callback_data": "posicoes_abertas"}],
+            [{"text": "🏆 Últimas Ganhas", "callback_data": "ultimas_ganhadas"}],
+            [{"text": "⚙️ Status Bot", "callback_data": "status_bot"}]
+        ]
         
-        # Modo com telegram.ext
+        menu_text = (
+            "🤖 <b>Menu do Bot</b>\n\n"
+            "Escolha uma opção para ver detalhes:"
+        )
+        
+        # Enviar mensagem diretamente com a API do Telegram
+        import json
+        reply_markup = {"inline_keyboard": keyboard}
+        
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        data = {
+            "chat_id": self.chat_id,
+            "text": menu_text,
+            "parse_mode": "HTML",
+            "reply_markup": json.dumps(reply_markup)
+        }
+        
+        import requests
         try:
-            from telegram import Bot
-            bot = Bot(token=self.token)
-            bot.send_message(chat_id=self.chat_id, text=text, 
-                           parse_mode="HTML", disable_web_page_preview=True)
-            return True
+            response = requests.post(url, json=data, timeout=10)
+            if response.status_code == 200:
+                print("  [TG] Menu enviado com sucesso")
+                return True
+            else:
+                print(f"  [TG] Erro ao enviar menu: {response.status_code}")
+                return False
         except Exception as e:
-            print(f"  [TG] send_message exception: {e}")
+            print(f"  [TG] Erro ao enviar menu: {e}")
             return False
 
     # ══════════════════════════════════════════════════════

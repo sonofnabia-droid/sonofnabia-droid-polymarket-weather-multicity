@@ -1249,6 +1249,10 @@ def main():
             # Passar os estados dos bots para o menu
             tg.start_polling(bot_states=states)
             print(f"  {C['green']}✓ Menu interativo do Telegram ativado{R}")
+            
+            # Enviar menu automaticamente quando o bot inicia
+            print(f"  {C['green']}✓ Enviando menu inicial para o Telegram{R}")
+            tg.send_menu()
         except Exception as e:
             print(f"  {C['yellow']}! Falha ao iniciar polling do Telegram: {e}{R}")
     
