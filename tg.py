@@ -767,25 +767,116 @@ class TG:
         return self.send("\n".join(lines))
 
     def alert_multi_city_summary(self, mode_str, total_pnl, n_trades, cities_data):
-        """Resumo consolidado de todas as cidades."""
+        """
+        Resumo consolidado de todas as cidades.
+
+        cities_data (lista de dicts, campos opcionais além de name/pnl):
+          - p_ensemble: float 0..1   (prob actual do modelo)
+          - threshold:  float 0..1   (threshold calibrado)
+          - hour_min:   int          (hora mínima de entrada)
+          - bought:     bool         (já comprou hoje?)
+          - temp_now:   float        (temperatura actual °C)
+          - running_max: float       (máximo do dia °C)
+          - local_hhmm: str          (hora local cidade)
+        """
         mode_icon = "🟢" if mode_str == "REAL" else "🟡"
         pnl_icon = "📈" if total_pnl >= 0 else "📉"
-        
+
         lines = [
             f"{mode_icon} <b>Relatório Multi-Cidade</b> — {datetime.now().strftime('%H:%M')}",
             f"  Modo: <b>{mode_str}</b>",
             f"  Apostas hoje: <b>{n_trades}</b>",
             f"  {pnl_icon} P&L Total: <b>${total_pnl:+.2f}</b>",
             "",
-            "<b>Top Cidades (PnL):</b>"
+            "<b>Cidades (P(pico) / threshold / estado):</b>",
         ]
-        
-        # Ordenar cidades por PnL e mostrar top 5
-        top_cities = sorted(cities_data, key=lambda x: x['pnl'], reverse=True)
-        for c in top_cities[:8]:
-            c_icon = "✅" if c['pnl'] > 0 else ("❌" if c['pnl'] < 0 else "⚪")
-            lines.append(f"  {c_icon} {c['name'].title()}: <b>${c['pnl']:+.2f}</b>")
-            
+
+        # Ordenar cidades por p_ensemble desc (para ver quais estão mais perto de disparar)
+        sorted_cities = sorted(
+            cities_data,
+            key=lambda x: x.get('p_ensemble', 0.0),
+            reverse=True,
+        )
+        for c in sorted_cities[:10]:
+            name   = c.get('name', '?').replace('_', ' ').title()
+            pnl    = c.get('pnl', 0.0)
+            p_ens  = c.get('p_ensemble', 0.0)
+            thr    = c.get('threshold', 0.65)
+            bought = c.get('bought', False)
+            temp   = c.get('temp_now')
+            rmax   = c.get('running_max')
+            local  = c.get('local_hhmm', '')
+
+            # Iconografia
+            if bought:
+                icon = "💼"  # já tem posição
+            elif p_ens >= thr:
+                icon = "🔥"  # sinal activo
+            elif p_ens >= thr * 0.85:
+                icon = "⚡"  # quase-sinal
+            elif p_ens >= thr * 0.6:
+                icon = "🔍"  # a aproximar-se
+            else:
+                icon = "💤"  # longe
+
+            # Temperatura compacta
+            temp_str = ""
+            if temp is not None:
+                temp_str = f" {temp:.0f}°C"
+                if rmax is not None:
+                    temp_str += f"/{rmax:.0f}°↑"
+
+            # Barra P(pico)
+            bar = _tg_bar(p_ens, width=8)
+            gap = (thr - p_ens) * 100
+            gap_str = f"  (faltam {gap:.0f}pts)" if gap > 0 else ""
+
+            lines.append(
+                f"  {icon} <b>{name}</b>{temp_str}  "
+                f"{bar} {p_ens*100:>3.0f}/{thr*100:>2.0f}%{gap_str}"
+            )
+
+        return self.send("\n".join(lines))
+
+    def alert_near_signal(self, city_name, p, threshold, rmax=None, temp_now=None):
+        """
+        Aviso de quase-sinal: p_ensemble perto do threshold mas ainda não disparou.
+        Útil para debug — ajuda a perceber porque é que o bot não está a apostar.
+        """
+        pct     = p * 100
+        thr_pct = threshold * 100
+        gap     = thr_pct - pct
+        bar     = _tg_bar(p, width=12)
+
+        pretty = city_name.replace('_', ' ').title()
+
+        temp_str = ""
+        if temp_now is not None:
+            temp_str = f"  🌡 {temp_now:.1f}°C"
+        if rmax is not None:
+            temp_str += f"  RMax {rmax:.0f}°C"
+
+        lines = [
+            f"⚡ <b>Quase-sinal</b> — {pretty}",
+            f"  P(pico): <b>{pct:.1f}%</b>  (threshold {thr_pct:.0f}%)",
+            f"  {bar}{temp_str}",
+            f"  Faltam <b>{gap:.1f} pontos</b> para disparar",
+            "",
+            "<i>Se a probabilidade subir nas próximas horas, há bet.</i>",
+        ]
+        return self.send("\n".join(lines))
+
+    def alert_eod_fallback(self, city_name, p, fallback_thr, original_thr, bracket_label, ask):
+        """Aviso de que o EOD fallback foi activado e vai forçar uma bet."""
+        pretty = city_name.replace('_', ' ').title()
+        lines = [
+            f"⏰ <b>EOD Fallback activado</b> — {pretty}",
+            f"  P(pico): <b>{p*100:.1f}%</b>",
+            f"  Threshold original: {original_thr*100:.0f}%  →  fallback: <b>{fallback_thr*100:.0f}%</b>",
+            f"  🎯 {bracket_label}  ask <b>{ask*100:.1f}¢</b>",
+            "",
+            "<i>Forçando entrada — nenhuma bet feita hoje, hora limite a aproximar-se.</i>",
+        ]
         return self.send("\n".join(lines))
 
     # ══════════════════════════════════════════════════════
@@ -820,7 +911,8 @@ class TG:
                   forecast_agreement=None,
                   ensemble_result=None,
                   usdc_balance=None,
-                  bet_blocked_reason=None):
+                  bet_blocked_reason=None,
+                  city_name=None):
         """
         Dashboard completa enviada periodicamente (default 30min).
         Combina: estado actual, ensemble, mercado, bet, P&L acumulado.
@@ -832,8 +924,14 @@ class TG:
         mode_icon = "🟢" if mode_str == "REAL" else "🟡"
         now_str = datetime.now().strftime("%H:%M")
 
+        # Título dinâmico: usa city_name se fornecido, senão fallback "Munich"
+        if city_name:
+            city_display = city_name.replace("_", " ").title()
+        else:
+            city_display = "Munich"
+
         lines = [
-            f"{mode_icon} <b>Munich Bot Live</b>  "
+            f"{mode_icon} <b>{city_display} Bot Live</b>  "
             f"[{mode_str}]  {today}  {now_str}",
             "  ─────────────────────────────────────",
             "",

@@ -313,6 +313,12 @@ class CityState:
     _settled_position_ids: set[str] = field(default_factory=set)
     _bootstrap_pending: bool = True
     dashboard_enabled: bool = False
+    # ── NOVOS: filtros e EOD fallback ──
+    max_buy_ask: float = 0.85
+    force_eod_trade: bool = False
+    eod_fallback_threshold: float = 0.5
+    eod_start_hours_before_close: int = 2
+    _last_near_signal_ts: float = 0.0
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -548,6 +554,225 @@ def _tg_alert_stop_loss_blocked(city_name: str, position: dict, current_temp: fl
             )
         except Exception as e:
             print(f"[TG] stop_loss_blocked failed: {e}")
+
+
+# ════════════════════════════════════════════════════
+#  HELPERS PARA DASHBOARD TELEGRAM PERIÓDICO (single-city)
+# ════════════════════════════════════════════════════
+
+def _build_ascii_chart(slots: list, width: int = 28, height: int = 6) -> list:
+    """
+    Constrói um chart ASCII multi-linha de temperatura ao longo do dia.
+    Adequado para Telegram (monospace, ~28 chars de largura).
+
+    Retorna uma lista de strings (uma por linha), prontas para enviar.
+    """
+    if not slots:
+        return ["  sem dados suficientes"]
+
+    temps = []
+    for s in slots:
+        try:
+            t = float(s.get("temp_c")) if s.get("temp_c") is not None else None
+            if t is not None:
+                temps.append((int(s["hour"]), int(s.get("slot30", 0)), t))
+        except (TypeError, ValueError):
+            continue
+
+    if not temps:
+        return ["  sem dados válidos"]
+
+    # Ordenar por tempo
+    temps.sort(key=lambda x: x[0] * 60 + x[1])
+
+    t_min = min(t[2] for t in temps)
+    t_max = max(t[2] for t in temps)
+    t_rng = max(t_max - t_min, 1.0)
+
+    # Amostrar para a largura desejada
+    n = len(temps)
+    if n > width:
+        sampled = [temps[int(i * n / width)] for i in range(width)]
+    else:
+        sampled = temps
+
+    lines = []
+    for row in range(height, 0, -1):
+        # Threshold do meio desta linha
+        threshold = t_min + (t_rng * (row - 0.5) / height)
+        line_chars = []
+        for h, m, t in sampled:
+            if t >= threshold + (t_rng / height / 2):
+                line_chars.append("█")
+            elif t >= threshold:
+                line_chars.append("▄")
+            elif t >= threshold - (t_rng / height / 2):
+                line_chars.append("▁")
+            else:
+                line_chars.append(" ")
+        label = f"{threshold:>4.0f}°C"
+        lines.append(f"  {label} │{''.join(line_chars)}")
+
+    # Eixo X
+    lines.append(f"       └{'─' * width}")
+
+    # Labels de hora nas extremidades
+    if len(sampled) >= 2:
+        first_h = sampled[0][0]
+        last_h = sampled[-1][0]
+        first_label = f"{first_h:02d}h"
+        last_label = f"{last_h:02d}h"
+        gap = max(1, width - len(first_label) - len(last_label))
+        lines.append(f"        {first_label}{' ' * gap}{last_label}")
+
+    # Anotação do pico
+    peak_t = t_max
+    peak_idx = max(range(len(sampled)), key=lambda i: sampled[i][2])
+    peak_h = sampled[peak_idx][0]
+    lines.append(f"  Pico: {peak_t:.1f}°C @ {peak_h:02d}h  |  Min: {t_min:.1f}°C  Range: {t_rng:.1f}°C")
+
+    return lines
+
+
+def _send_single_city_dashboard(tg_inst, states, city_name, daily_stats,
+                                 run_mode, bankroll) -> None:
+    """
+    Constrói e envia um dashboard completo para uma única cidade via Telegram.
+    Inclui: curva de temperatura ASCII, P(pico), tabela de brackets, forecast,
+    posição, P&L acumulado.
+
+    Chamado a cada args.tg_interval segundos pelo main loop quando is_multi=False.
+    """
+    if city_name not in states:
+        return
+    state = states[city_name]
+    city = state.city
+
+    # rmax e rmax_time
+    if state.slots_so_far:
+        valid_slots = [s for s in state.slots_so_far if s.get("temp_c") is not None]
+        if valid_slots:
+            rmax_slot = max(valid_slots, key=lambda s: float(s["temp_c"]))
+            rmax = float(rmax_slot["temp_c"])
+            rmax_time = f"{int(rmax_slot['hour']):02d}:{int(rmax_slot.get('slot30', 0)):02d}"
+        else:
+            rmax = 0.0
+            rmax_time = "—"
+    else:
+        rmax = 0.0
+        rmax_time = "—"
+
+    # temp_now
+    temp_now = None
+    if state.latest_obs:
+        temp_now = state.latest_obs.get("temp_c")
+
+    # forecasts
+    forecast_max = None
+    if state.last_wu_forecast_max is not None:
+        forecast_max = {"temp_max": int(state.last_wu_forecast_max)}
+
+    om_forecast = None
+    if state.last_om_forecast_max is not None:
+        om_forecast = {"temp_max": int(state.last_om_forecast_max)}
+
+    # forecast agreement (no formato esperado por tg.dashboard)
+    wu = state.last_wu_forecast_max
+    om = state.last_om_forecast_max
+    forecast_agreement = None
+    if wu is not None and om is not None:
+        forecast_agreement = {
+            "valid": abs(wu - om) <= 1,
+            "diff": abs(wu - om),
+            "consensus_max": (wu + om) // 2,
+            "reason": "" if abs(wu - om) <= 1 else f"WU={wu}°C vs OM={om}°C",
+        }
+
+    # peak detected?
+    thr = city.threshold if city.threshold is not None else 0.65
+    peak_detected = state.last_p_ensemble >= thr
+
+    # Bet (posição actual)
+    bet = None
+    if state.entry and getattr(state.entry, "bought", False):
+        rec = getattr(state.entry, "record", None) or {}
+        bet = dict(rec)
+        bet.setdefault("city", city.name)
+        try:
+            bet.setdefault("market_slug", state.fetcher.date_to_slug(city_date(city)))
+        except Exception:
+            bet.setdefault("market_slug", "")
+
+    # positions_summary — lê do CLOB se disponível
+    positions_summary = None
+    if state.clob and hasattr(state.clob, "positions"):
+        try:
+            all_pos = state.clob.positions.all_positions()
+            n_won = sum(1 for p in all_pos if getattr(p, 'status', None) and p.status.value == "won")
+            n_lost = sum(1 for p in all_pos if getattr(p, 'status', None) and p.status.value == "lost")
+            n_open = sum(1 for p in all_pos if getattr(p, 'status', None) and p.status.value == "open")
+            total_pnl = sum(float(getattr(p, 'pnl_usd', 0) or 0) for p in all_pos)
+            total_invested = sum(float(getattr(p, 'size_usdc', 0) or 0) for p in all_pos)
+            nc = n_won + n_lost
+            total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0.0
+            positions_summary = {
+                "n_won": n_won,
+                "n_lost": n_lost,
+                "n_open": n_open,
+                "total_pnl_usd": total_pnl,
+                "total_invested": total_invested,
+                "total_pnl_pct": total_pnl_pct,
+            }
+        except Exception as e:
+            print(f"  {C['yellow']}positions_summary build error: {e}{R}")
+
+    # Chart ASCII
+    chart_lines = _build_ascii_chart(state.slots_so_far)
+
+    # ensemble_result
+    ensemble_result = None
+    if state.last_p_ensemble > 0:
+        ensemble_result = {
+            "p_ensemble": state.last_p_ensemble,
+            "p_lgbm": state.last_p_lgbm,
+        }
+
+    # City today
+    city_today = city_date(city)
+
+    # Saldo USDC (apenas REAL mode)
+    usdc_balance = None
+    if str(run_mode).upper() == "REAL" and state.clob and hasattr(state.clob, "get_usdc_balance"):
+        try:
+            usdc_balance = state.clob.get_usdc_balance()
+        except Exception:
+            pass
+
+    # Enviar
+    try:
+        tg_inst.dashboard(
+            today=city_today.isoformat(),
+            p=state.last_p_ensemble,
+            rmax=rmax,
+            rmax_time=rmax_time,
+            temp_now=temp_now,
+            forecast_max=forecast_max,
+            om_forecast=om_forecast,
+            forecast_agreement=forecast_agreement,
+            market=state.market,
+            bracket=state.last_target_bracket,
+            ensemble_result=ensemble_result,
+            peak_detected=peak_detected,
+            bet=bet,
+            trading_mode=run_mode,
+            chart=chart_lines,
+            reason="periodic",
+            positions_summary=positions_summary,
+            usdc_balance=usdc_balance,
+            city_name=city.name,
+        )
+    except Exception as e:
+        print(f"  {C['yellow']}TG dashboard send failed: {e}{R}")
 
 
 # ════════════════════════════════════════════════════
@@ -859,7 +1084,45 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         state.last_target_bracket = PolymarketFetcher.find_bracket(
             state.market, running_max
         )
-        
+
+        # ── NOVO: EOD Fallback ──
+        # Se --force-eod-trade activo, ainda não comprou hoje, e estamos a <N horas
+        # do day_end, baixar temporariamente o threshold para forçar pelo menos 1 trade.
+        # Isto garante >=1 trade/dia em multi-cidade mesmo quando o modelo está conservative.
+        _eod_active = False
+        _original_threshold_for_restore = None
+        if (state.force_eod_trade
+            and not state.entry.bought
+            and h_cur >= city.day_end - state.eod_start_hours_before_close
+            and p_ensemble > 0.0):
+            current_thr = float(getattr(state.entry, 'threshold', 0.65) or 0.65)
+            fallback_thr = current_thr * state.eod_fallback_threshold
+            if p_ensemble >= fallback_thr:
+                _original_threshold_for_restore = current_thr
+                state.entry.threshold = fallback_thr
+                _eod_active = True
+                print(f"  {C['yellow']}{city.name.upper()} EOD FALLBACK: "
+                      f"thr {current_thr:.2f}→{fallback_thr:.2f}, "
+                      f"p={p_ensemble:.2f}, h={h_cur}{R}")
+                # Avisar via Telegram (uma vez por trigger)
+                if state.last_target_bracket:
+                    _bracket_lbl = state.last_target_bracket.get('label', '?')
+                    _bracket_ask = state.last_target_bracket.get('ask') or state.last_target_bracket.get('price', 0)
+                    tg_eod = _get_tg()
+                    if tg_eod:
+                        try:
+                            _tg_thread(
+                                tg_eod.alert_eod_fallback,
+                                city.name, p_ensemble, fallback_thr, current_thr,
+                                _bracket_lbl, _bracket_ask,
+                            )
+                        except Exception:
+                            pass
+            else:
+                # EOD seria activado mas p_ensemble ainda abaixo do fallback_thr
+                print(f"  {C['dim']}{city.name.upper()} EOD: p={p_ensemble:.2f} < "
+                      f"fallback={fallback_thr:.2f} (ainda sem forçar){R}")
+
         actions = state.entry.evaluate(
             p_ensemble=p_ensemble,
             hour=h_cur,
@@ -905,6 +1168,23 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     _tg_alert(
                         f"🚫 <b>{city.name.title()}</b> buy bloqueado: "
                         f"ask {effective_ask*100:.1f}¢ < mínimo {min_buy_ask*100:.0f}¢"
+                    )
+                    break
+
+                # ── NOVO: filtro max_buy_ask ──
+                # Bloqueia buys acima de X¢ (default 85¢) — brackets quase certos têm
+                # payout mínimo (1.00 - 0.85 = 0.15 por share) e risco/retorno mau.
+                # Este filtro já existia em calibrate_all.py mas não era aplicado no live.
+                max_buy_ask = float(getattr(state, "max_buy_ask", 0.85))
+                if effective_ask > max_buy_ask:
+                    print(
+                        f"  {C['yellow']}{city.name.upper()} BUY BLOQUEADO: "
+                        f"ask {effective_ask*100:.1f}¢ > máximo {max_buy_ask*100:.0f}¢{R}"
+                    )
+                    _tg_alert(
+                        f"🚫 <b>{city.name.title()}</b> buy bloqueado: "
+                        f"ask {effective_ask*100:.1f}¢ > máximo {max_buy_ask*100:.0f}¢ "
+                        f"(bracket quase certo, payout mau)"
                     )
                     break
 
@@ -999,6 +1279,13 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         print(f"  {C['red']}{city.name.upper()} BUY [PAPER] REJEITADO: {err}{R}")
 
                 break  # Apenas uma ação por tick
+
+        # ── NOVO: restaurar threshold original após EOD fallback ──
+        # O evaluate() já correu; se gerou action, o buy foi processado (ou não).
+        # Temos de repor o threshold para não afectar o próximo tick.
+        if _eod_active and _original_threshold_for_restore is not None:
+            state.entry.threshold = _original_threshold_for_restore
+            _eod_active = False
 
     # ─── STOP-LOSS CHECK ────────────────────────────
     if state.entry and state.clob and state.latest_obs:
@@ -1147,6 +1434,26 @@ def main():
                         help="Força dashboard rich mesmo se stdout não parecer TTY")
     parser.add_argument("--wu-only", action="store_true",
                         help="Para cidades com WU, não usa fallback Open-Meteo")
+    # ── NOVOS: controlo de trade frequency e dashboard periódico ──
+    parser.add_argument("--tg-interval", type=int, default=1800,
+                        help="Intervalo em segundos para dashboard Telegram periódico "
+                             "(default 1800=30min). Aplica-se a single e multi-cidade.")
+    parser.add_argument("--threshold-override", type=float, default=None,
+                        help="Override do threshold para TODAS as cidades (ex: 0.55). "
+                             "Útil para forçar mais trades quando os thresholds calibrados "
+                             "estão altos demais.")
+    parser.add_argument("--max-buy-ask", type=float, default=0.85,
+                        help="Ask máximo para comprar em fracção 0..1 (default 0.85=85¢). "
+                             "Blocks buys acima deste valor — brackets quase certos têm "
+                             "payout mínimo.")
+    parser.add_argument("--force-eod-trade", action="store_true",
+                        help="Força buy nas últimas N horas do dia se nenhuma bet foi feita. "
+                             "Útil para garantir >=1 trade/dia em multi-cidade.")
+    parser.add_argument("--eod-fallback-threshold", type=float, default=0.5,
+                        help="Fração do threshold original para EOD fallback (default 0.5). "
+                             "Ex: thr=0.70, fallback=0.35. P(pico)>=0.35 dispara buy.")
+    parser.add_argument("--eod-start-hours-before-close", type=int, default=2,
+                        help="Horas antes do day_end para começar EOD fallback (default 2)")
     args = parser.parse_args()
 
     raw_city_names = [c.strip() for c in args.cities.split(",") if c.strip()]
@@ -1193,6 +1500,20 @@ def main():
         models = load_models(city_name)
 
         entry = create_strategy(city, mode=args.mode, parcel_size=PARCEL_SIZE)
+        # ── NOVO: aplicar threshold override se fornecido via CLI ──
+        if args.threshold_override is not None:
+            if hasattr(entry, 'threshold') and entry.threshold is not None:
+                original_thr = float(entry.threshold)
+                entry.threshold = float(args.threshold_override)
+                print(f"  {C['yellow']}{city.name}: threshold override "
+                      f"{original_thr:.3f} → {args.threshold_override}{R}")
+            else:
+                # Alguns strategies podem não ter threshold; tenta atribuir à mesma
+                try:
+                    entry.threshold = float(args.threshold_override)
+                    print(f"  {C['yellow']}{city.name}: threshold set to {args.threshold_override}{R}")
+                except Exception:
+                    print(f"  {C['red']}{city.name}: não consegui aplicar threshold_override{R}")
         print(
             f"  {city.name}: estratégia carregada "
             f"(threshold={getattr(entry, 'threshold', 'n/a')}, "
@@ -1210,6 +1531,13 @@ def main():
             dashboard_enabled=dashboard_enabled,
         )
         state.wu_only = bool(args.wu_only)
+
+        # ── NOVO: configurar filtros e EOD fallback no state ──
+        state.max_buy_ask = float(args.max_buy_ask)
+        state.force_eod_trade = bool(args.force_eod_trade)
+        state.eod_fallback_threshold = float(args.eod_fallback_threshold)
+        state.eod_start_hours_before_close = int(args.eod_start_hours_before_close)
+        state._last_near_signal_ts = 0.0
 
         import os
         state.wu_key = os.environ.get("WU_API_KEY", "")
@@ -1291,7 +1619,12 @@ def main():
         f"  Modo: <b>{args.run.upper()}</b>\n"
         f"  Estratégia: <b>{args.mode}</b>\n"
         f"  Cidades: <b>{len(city_names)}</b> — {', '.join(city_names)}\n"
-        f"  Intervalo: <b>{args.interval}s</b>"
+        f"  Intervalo: <b>{args.interval}s</b>\n"
+        f"  Dashboard TG: <b>every {args.tg_interval}s</b>"
+        + (f"\n  Threshold override: <b>{args.threshold_override}</b>" if args.threshold_override else "")
+        + (f"\n  ⏰ EOD fallback: <b>ON</b> (fallback thr={args.eod_fallback_threshold}x, "
+           f"start {args.eod_start_hours_before_close}h antes do close)" if args.force_eod_trade else "")
+        + (f"\n  Max buy ask: <b>{args.max_buy_ask*100:.0f}¢</b>")
     )
 
     # Daily stats por cidade — para passar ao dashboard                          # ← NOVO
@@ -1300,8 +1633,8 @@ def main():
     session_last_reported_pnl = {cn: 0.0 for cn in city_names}
     session_last_dates = {cn: None for cn in city_names}
     
-    _tg_last_dashboard = time.time()  # Primeiro dashboard após 1h
-    _tg_dashboard_interval = 60 * 60  # 1 hora
+    _tg_last_dashboard = time.time()  # Primeiro dashboard após intervalo
+    _tg_dashboard_interval = args.tg_interval  # default 1800s = 30 min (single E multi)
     _tg_last_summary_date = None
 
     if is_multi:
@@ -1463,7 +1796,31 @@ def main():
                             for cn in city_names:
                                 ds = daily_stats.get(cn)
                                 pnl = float(getattr(ds, "daily_pnl", 0.0) or 0.0) if ds else 0.0
-                                cities_data.append({"name": cn, "pnl": pnl})
+                                st_c = states.get(cn)
+                                city_cfg = st_c.city if st_c else None
+                                p_ens = float(getattr(st_c, "last_p_ensemble", 0.0) or 0.0) if st_c else 0.0
+                                thr = (city_cfg.threshold if city_cfg and city_cfg.threshold is not None else 0.65)
+                                hmin = (city_cfg.hour_min if city_cfg and city_cfg.hour_min is not None else 14)
+                                bought = bool(st_c.entry.bought) if (st_c and st_c.entry) else False
+                                temp_now = st_c.latest_obs.get("temp_c") if (st_c and st_c.latest_obs) else None
+                                rmax = None
+                                if st_c and st_c.slots_so_far:
+                                    try:
+                                        rmax = max(float(s["temp_c"]) for s in st_c.slots_so_far if s.get("temp_c") is not None)
+                                    except Exception:
+                                        rmax = None
+                                local_hhmm = city_now(city_cfg).strftime("%H:%M") if city_cfg else ""
+                                cities_data.append({
+                                    "name": cn,
+                                    "pnl": pnl,
+                                    "p_ensemble": p_ens,
+                                    "threshold": thr,
+                                    "hour_min": hmin,
+                                    "bought": bought,
+                                    "temp_now": temp_now,
+                                    "running_max": rmax,
+                                    "local_hhmm": local_hhmm,
+                                })
                             
                             tg_inst.alert_multi_city_summary(
                                 mode_str=args.run.upper(),
@@ -1475,7 +1832,56 @@ def main():
 
                 except Exception as e:
                     print(f"  {C['red']}Dashboard/snapshot error: {e}{R}")
-            # ── single-city: _tick_city já faz os seus próprios prints ─────
+            # ── SINGLE-CITY: dashboard periodico detalhado + near-signal alert ──
+            else:
+                now_ts = time.time()
+                # 1) Dashboard completo a cada args.tg_interval segundos
+                if now_ts - _tg_last_dashboard >= args.tg_interval:
+                    tg_inst = _get_tg()
+                    if tg_inst:
+                        try:
+                            _send_single_city_dashboard(
+                                tg_inst, states, city_names[0],
+                                daily_stats, args.run,
+                                city_bankrolls.get(city_names[0], default_bankroll),
+                            )
+                        except Exception as e:
+                            print(f"  {C['yellow']}Single-city TG dashboard error: {e}{R}")
+                    _tg_last_dashboard = now_ts
+
+                # 2) Near-signal alert (throttled a 30 min)
+                #    Dispara quando p_ensemble esta entre threshold*0.85 e threshold
+                #    e ainda nao houve buy - ajuda a perceber porque nao dispara.
+                try:
+                    st = states[city_names[0]]
+                    city_cfg = st.city
+                    thr = city_cfg.threshold if city_cfg.threshold is not None else 0.65
+                    p = float(getattr(st, "last_p_ensemble", 0.0) or 0.0)
+                    if (st.entry
+                        and not st.entry.bought
+                        and thr * 0.85 <= p < thr
+                        and (now_ts - st._last_near_signal_ts) >= 1800):
+                        tg_inst = _get_tg()
+                        if tg_inst:
+                            temp_now = st.latest_obs.get("temp_c") if st.latest_obs else None
+                            rmax = None
+                            if st.slots_so_far:
+                                try:
+                                    rmax = max(float(s["temp_c"]) for s in st.slots_so_far
+                                               if s.get("temp_c") is not None)
+                                except Exception:
+                                    pass
+                            try:
+                                tg_inst.alert_near_signal(
+                                    city_cfg.name, p, thr,
+                                    rmax=rmax, temp_now=temp_now,
+                                )
+                            except Exception as e:
+                                print(f"  {C['yellow']}near_signal alert failed: {e}{R}")
+                        st._last_near_signal_ts = now_ts
+                except Exception as e:
+                    print(f"  {C['yellow']}near_signal check failed: {e}{R}")
+            # ── FIM single-city telegram ──
 
             time.sleep(args.interval)
 
