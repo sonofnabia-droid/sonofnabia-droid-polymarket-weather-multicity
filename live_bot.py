@@ -1120,7 +1120,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                             pass
             else:
                 # EOD seria activado mas p_ensemble ainda abaixo do fallback_thr
-                print(f"  {C['dim']}{city.name.upper()} EOD: p={p_ensemble:.2f} < "
+                print(f"  {DIM}{city.name.upper()} EOD: p={p_ensemble:.2f} < "
                       f"fallback={fallback_thr:.2f} (ainda sem forçar){R}")
 
         actions = state.entry.evaluate(
