@@ -88,8 +88,6 @@ class TG:
             import asyncio
             app = Application.builder().token(self.token).build()
 
-            app.add_handler(CommandHandler("start", self._cmd_start))
-            app.add_handler(CommandHandler("help", self._cmd_help))
             app.add_handler(CommandHandler("menu", self._cmd_menu))
             app.add_handler(CommandHandler("resumo", self._cmd_summary))
             app.add_handler(CommandHandler("posicoes", self._cmd_positions))
@@ -101,22 +99,6 @@ class TG:
             self._app = app
             await app.initialize()
             await app.start()
-            # ── NOVO: registar comandos no BotFather para aparecerem no menu '/' ──
-            # Isto faz com que o Telegram mostre um botão "/" ao lado da caixa de
-            # input com a lista de comandos disponíveis — sem precisares de escrever /menu.
-            try:
-                await app.bot.set_my_commands([
-                    ("menu",     "Abrir menu interativo"),
-                    ("charts",   "Ver charts por cidade"),
-                    ("resumo",   "Resumo do dia (PnL, win rate)"),
-                    ("posicoes", "Posições abertas"),
-                    ("ultimas",  "Últimas 5 vitórias"),
-                    ("status",   "Status do bot em todas as cidades"),
-                    ("help",     "Ajuda e lista de comandos"),
-                ])
-                print("  [TG] Comandos registados no BotFather (botão / visível)")
-            except Exception as e:
-                print(f"  [TG] Aviso: não consegui registar comandos no BotFather: {e}")
             await app.updater.start_polling(poll_interval=1.0)
             self.polling_active = True
             print("  [TG] Polling iniciado - bot pode receber comandos")
@@ -143,47 +125,6 @@ class TG:
         """Para o polling."""
         self.polling_active = False
         print("  [TG] Polling parado")
-
-    async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handler para /start - enviado quando abres o bot pela 1ª vez ou volta a ele.
-        Mostra menu + instruções para usar o botão '/' do Telegram."""
-        keyboard = [
-            [InlineKeyboardButton("📊 Resumo Hoje", callback_data='resumo_hoje')],
-            [InlineKeyboardButton("📂 Posições Abertas", callback_data='posicoes_abertas')],
-            [InlineKeyboardButton("🏆 Últimas Ganhas", callback_data='ultimas_ganhadas')],
-            [InlineKeyboardButton("📈 Charts por Cidade", callback_data='charts_menu')],
-            [InlineKeyboardButton("⚙️ Status Bot", callback_data='status_bot')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            "🤖 <b>Live Trading Bot</b>\n\n"
-            "Escolhe uma opção do menu abaixo, ou usa o botão <b>/</b> "
-            "ao lado da caixa de mensagem para ver todos os comandos disponíveis.\n\n"
-            "<i>Comandos rápidos:</i>\n"
-            "  /menu — este menu\n"
-            "  /charts — charts por cidade\n"
-            "  /resumo — resumo do dia\n"
-            "  /posicoes — posições abertas\n"
-            "  /status — status do bot",
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
-
-    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handler para /help - mostra lista de comandos."""
-        await update.message.reply_text(
-            "🤖 <b>Comandos disponíveis</b>\n\n"
-            "  /menu — Abrir menu interativo\n"
-            "  /charts — Charts (temperatura + brackets) por cidade\n"
-            "  /resumo — Resumo do dia (PnL, win rate)\n"
-            "  /posicoes — Posições abertas\n"
-            "  /ultimas — Últimas 5 vitórias\n"
-            "  /status — Status do bot em todas as cidades\n"
-            "  /help — Esta mensagem\n\n"
-            "<i>Dica: também podes clicar no botão </i><b>/</b><i> ao lado da "
-            "caixa de mensagem para abrir a lista de comandos.</i>",
-            parse_mode="HTML"
-        )
 
     async def _cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler para /menu - mostra menu interativo."""
