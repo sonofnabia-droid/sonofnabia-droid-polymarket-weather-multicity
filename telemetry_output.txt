@@ -1,0 +1,316 @@
+
+Analisando 18 cidade(s) x 30 dia(s) = 540 combinações
+
+======================================================================
+  RESUMO MULTI-DIA — ANKARA — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.037
+     Média dos máximos diários:0.305
+     Máximo absoluto:          0.629
+
+  ⚡ QUASE-SINAIS:
+     Total:        25
+     Média/dia:    8.3
+     Máximo/dia:   25
+
+======================================================================
+  RESUMO MULTI-DIA — BUENOS_AIRES — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.000
+     Média dos máximos diários:0.000
+     Máximo absoluto:          0.000
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — CHICAGO — 2 dias
+======================================================================
+
+  Datas analisadas: 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.126
+     Média dos máximos diários:0.722
+     Máximo absoluto:          0.737
+
+  ⚡ QUASE-SINAIS:
+     Total:        19
+     Média/dia:    9.5
+     Máximo/dia:   14
+
+======================================================================
+  RESUMO MULTI-DIA — DALLAS — 2 dias
+======================================================================
+
+  Datas analisadas: 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.109
+     Média dos máximos diários:0.515
+     Máximo absoluto:          0.954
+
+  ⚡ QUASE-SINAIS:
+     Total:        5
+     Média/dia:    2.5
+     Máximo/dia:   5
+
+======================================================================
+  RESUMO MULTI-DIA — JAKARTA — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.000
+     Média dos máximos diários:0.000
+     Máximo absoluto:          0.000
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — KARACHI — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.091
+     Média dos máximos diários:0.678
+     Máximo absoluto:          0.747
+
+  ⚡ QUASE-SINAIS:
+     Total:        63
+     Média/dia:    21.0
+     Máximo/dia:   31
+
+======================================================================
+  RESUMO MULTI-DIA — KUALA_LUMPUR — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.040
+     Média dos máximos diários:0.526
+     Máximo absoluto:          0.919
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — LAGOS — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.016
+     Média dos máximos diários:0.304
+     Máximo absoluto:          0.665
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — LAS_VEGAS — 2 dias
+======================================================================
+
+  Datas analisadas: 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.122
+     Média dos máximos diários:0.892
+     Máximo absoluto:          0.918
+
+  ⚡ QUASE-SINAIS:
+     Total:        21
+     Média/dia:    10.5
+     Máximo/dia:   21
+
+======================================================================
+  RESUMO MULTI-DIA — MADRID — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.030
+     Média dos máximos diários:0.445
+     Máximo absoluto:          0.845
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — MIAMI — 2 dias
+======================================================================
+
+  Datas analisadas: 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.124
+     Média dos máximos diários:0.830
+     Máximo absoluto:          0.933
+
+  ⚡ QUASE-SINAIS:
+     Total:        30
+     Média/dia:    15.0
+     Máximo/dia:   30
+
+======================================================================
+  RESUMO MULTI-DIA — MOSCOW — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.006
+     Média dos máximos diários:0.036
+     Máximo absoluto:          0.071
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — MUNICH — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  📊 OUTCOMES:
+     Dias com outcome:    2
+     Wins:                0
+     Losses:              2
+     Win rate:            0.0%
+     P&L total:           $+19.47
+     Investido total:     $10.00
+     ROI:                 +194.7%
+     Total de buys:       2
+     Dias com buy:        2/2
+     Dias com race:       0
+     Dias com EOD:        0
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.041
+     Média dos máximos diários:0.523
+     Máximo absoluto:          0.920
+
+  ⚡ QUASE-SINAIS:
+     Total:        14
+     Média/dia:    4.7
+     Máximo/dia:   7
+
+======================================================================
+  RESUMO MULTI-DIA — PHOENIX — 2 dias
+======================================================================
+
+  Datas analisadas: 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.102
+     Média dos máximos diários:0.885
+     Máximo absoluto:          0.885
+
+  ⚡ QUASE-SINAIS:
+     Total:        15
+     Média/dia:    7.5
+     Máximo/dia:   8
+
+======================================================================
+  RESUMO MULTI-DIA — SINGAPORE — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.111
+     Média dos máximos diários:0.834
+     Máximo absoluto:          0.912
+
+  ⚡ QUASE-SINAIS:
+     Total:        45
+     Média/dia:    15.0
+     Máximo/dia:   24
+
+======================================================================
+  RESUMO MULTI-DIA — TAIPEI — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.089
+     Média dos máximos diários:0.590
+     Máximo absoluto:          0.622
+
+  ⚡ QUASE-SINAIS:
+     Total:        50
+     Média/dia:    16.7
+     Máximo/dia:   24
+
+======================================================================
+  RESUMO MULTI-DIA — TEL_AVIV — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.031
+     Média dos máximos diários:0.407
+     Máximo absoluto:          0.702
+
+  ⚡ QUASE-SINAIS:
+     Total:        0
+     Média/dia:    0.0
+     Máximo/dia:   0
+
+======================================================================
+  RESUMO MULTI-DIA — WARSAW — 3 dias
+======================================================================
+
+  Datas analisadas: 2026-06-21, 2026-06-20, 2026-06-19
+
+  📊 OUTCOMES:
+     Dias com outcome:    1
+     Wins:                0
+     Losses:              1
+     Win rate:            0.0%
+     P&L total:           $+13.25
+     Investido total:     $5.00
+     ROI:                 +265.0%
+     Total de buys:       1
+     Dias com buy:        1/1
+     Dias com race:       0
+     Dias com EOD:        0
+
+  🧠 P(ENSEMBLE) AGGREGATE:
+     Média das médias diárias: 0.080
+     Média dos máximos diários:0.505
+     Máximo absoluto:          0.785
+
+  ⚡ QUASE-SINAIS:
+     Total:        11
+     Média/dia:    3.7
+     Máximo/dia:   8

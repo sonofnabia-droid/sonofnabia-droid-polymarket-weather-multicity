@@ -29,6 +29,14 @@ from modules.strategy_factory import create_strategy
 from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus, round_to_tick
 from zoneinfo import ZoneInfo
 
+# ── NOVO: logger de telemetria para backtest offline
+try:
+    from tick_logger import get_tick_logger
+    _TICK_LOGGER = get_tick_logger()
+except Exception as e:
+    print(f"  [tick_logger] Aviso: tick_logger não carregado ({e}) — telemetria desactivada")
+    _TICK_LOGGER = None
+
 # ── Month names para Polymarket slug (usado em todos os eventos)
 MONTH_NAMES = {
     1: "january", 2: "february", 3: "march", 4: "april", 5: "may",
@@ -319,6 +327,14 @@ class CityState:
     eod_fallback_threshold: float = 0.5
     eod_start_hours_before_close: int = 2
     _last_near_signal_ts: float = 0.0
+    # ── FIX 1: guardar threshold_override para reaplicar no reset diário ──
+    threshold_override: Optional[float] = None
+    # ── FIX 4: throttle para _save_daily_stats ──
+    _last_stats_save: float = 0.0
+    # ── FIX 5: backoff para bootstrap ──
+    _last_bootstrap_attempt: float = 0.0
+    # ── FIX 7: throttle para persistir history_max ──
+    _last_history_save: float = 0.0
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -349,18 +365,29 @@ def _save_daily_stats(stats: DailyStats, city_name: str) -> None:
 
 
 def _append_bet_record(bet_record: dict, city_name: str, d: date) -> None:
-    """Persistir trades para anti-duplicado entre restarts."""
+    """Persistir trades para anti-duplicado entre restarts (atómico)."""
     bets_path = LOG_DIR / f"bets_{city_name}_{d}.json"
+    tmp_path = LOG_DIR / f".tmp_bets_{city_name}_{d}_{int(time.time()*1000)}.json"
     try:
         existing = json.loads(bets_path.read_text()) if bets_path.exists() else []
         existing.append(bet_record)
-        bets_path.write_text(json.dumps(existing, indent=2))
+        tmp_path.write_text(json.dumps(existing, indent=2))
+        tmp_path.replace(bets_path)  # atómico rename
     except Exception as e:
         print(f"  {C['yellow']}{city_name}: falha a guardar bet record: {e}{R}")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
 
 def _bootstrap_state_today(state: CityState) -> None:
-    """Carrega slots já conhecidos do dia, sem incluir slots futuros."""
+    """Carrega slots já conhecidos do dia, sem incluir slots futuros.
+
+    SEM FALLBACK PARA OM — só usa WU. Se WU falha, slots_so_far fica vazio
+    e o caller decide o que fazer. Os prints do fetch_wu_day mostram a causa real.
+    """
     city = state.city
     now_city = city_now(city)
     limit_h, limit_s = ceil_slot(now_city.hour, now_city.minute)
@@ -371,20 +398,17 @@ def _bootstrap_state_today(state: CityState) -> None:
             series, slots = bootstrap_today(
                 city, state.wu_key, state.wu_sess, verbose=not state.dashboard_enabled
             )
-            if len(slots) < 4 and not getattr(state, "wu_only", False):
-                print(f"  {C['yellow']}{city.name}: WU com poucos dados, fallback OM{R}")
-                series, slots = bootstrap_om_today(
-                    city, state.om_sess, verbose=not state.dashboard_enabled
-                )
+            # SEM FALLBACK — se WU falhou, slots fica vazio
+            if len(slots) < 4:
+                print(f"  {C['yellow']}{city.name}: WU devolveu {len(slots)} slots "
+                      f"(< 4) — ver mensagens [WU] acima{R}")
         else:
-            series, slots = bootstrap_om_today(
-                city, state.om_sess, verbose=not state.dashboard_enabled
-            )
+            # Cidade sem WU history path — sem dados em modo WU-only
+            print(f"  {C['yellow']}{city.name}: sem WU history path — sem dados{R}")
+            series, slots = {}, []
     except Exception as e:
-        print(f"  {C['yellow']}{city.name}: bootstrap falhou, usando OM: {e}{R}")
-        series, slots = bootstrap_om_today(
-            city, state.om_sess, verbose=not state.dashboard_enabled
-        )
+        print(f"  {C['red']}{city.name}: bootstrap WU falhou: {e}{R}")
+        series, slots = {}, []
 
     filtered_slots = [
         s for s in slots
@@ -785,14 +809,27 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     now = bot_now()
     city_today = city_date(city)
 
-    # Reset diário (Fix 11)
+    # ── Variáveis para tick_logger (inicializadas c/ defaults) ──
+    _eod_active = False
+    _actions_logged: list = []
+
+    # Reset diário (Fix 11) + FIX 2: guardar stats anterior antes de resetar
     if not hasattr(state, '_last_date'):
         state._last_date = city_today
     if city_today != state._last_date:
+        # Guardar stats do dia anterior antes de perder
+        if hasattr(state, 'daily_stats') and state.daily_stats:
+            _save_daily_stats(state.daily_stats, city.name)
+        # FIX 3: limpar settled IDs antigos (manter só últimos 30 dias de memória)
+        if len(state._settled_position_ids) > 10000:
+            state._settled_position_ids.clear()
         state.slots_so_far = []
         state.series_today = {}
         state.cloud_by_hour = {}
         state.entry = create_strategy(city, mode=state.strategy_mode, parcel_size=PARCEL_SIZE)
+        # FIX 1: reaplicar threshold_override se existir
+        if state.threshold_override is not None and hasattr(state.entry, 'threshold'):
+            state.entry.threshold = float(state.threshold_override)
         if hasattr(state.entry, '_stop_loss_blocked_alerted'):
             state.entry._stop_loss_blocked_alerted = False
         state._last_date = city_today
@@ -802,29 +839,29 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     # Em vez de: stats = DailyStats(date=city_today)
     stats = state.daily_stats  # ← Usar o objecto persistente
 
+    # FIX 5: backoff para bootstrap (evita spam de tentativas se API down)
     if getattr(state, "_bootstrap_pending", False) and len(state.slots_so_far) < 4:
-        try:
-            _bootstrap_state_today(state)
-        except Exception:
-            state._bootstrap_pending = True
+        now_ts_boot = time.time()
+        if now_ts_boot - state._last_bootstrap_attempt >= 60:  # só a cada 60s
+            state._last_bootstrap_attempt = now_ts_boot
+            try:
+                _bootstrap_state_today(state)
+                state._bootstrap_pending = False
+            except Exception:
+                pass  # mantém pending, tenta de novo daqui a 60s
 
-    # Fetch WU (se disponível)
+    # Fetch WU (única fonte — sem fallback OM)
     new_obs = None
     if city.wu_history_path:
         try:
             new_obs = fetch_wu_latest(city, state.wu_key, state.wu_sess)
         except Exception as e:
             print(f"  {C['yellow']}WU fetch failed: {e}{R}")
-
-    # Se não há WU, usar Open-Meteo
-    if not new_obs:
-        try:
-            om_hourly = fetch_om_hourly_today(city, state.om_sess)
-            if om_hourly:
-                h_now = city_now(city).hour
-                new_obs = min(om_hourly, key=lambda r: abs(r["hour"] - h_now))
-        except Exception as e:
-            print(f"  {C['yellow']}OM fetch failed: {e}{R}")
+        # fetch_wu_latest retorna None quando falha — fetch_wu_day já imprimiu a causa real
+        if new_obs is None:
+            # Não vamos a OM — avisar se WU falhou silenciosamente
+            # (Mensagem só 1x por tick, para não spammar)
+            pass  # prints já foram feitos dentro de fetch_wu_day
 
     state.latest_obs = new_obs
     if new_obs and not is_plausible_temp(new_obs.get("temp_c"), city):
@@ -925,6 +962,15 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     from predictor import update_history_max, init_history_max
     history_max_for_features = dict(state.history_max)
     update_history_max(state.history_max, state.slots_so_far, city.name)
+    # FIX 7: persistir history_max a cada hora (evita perda de dados em restart)
+    now_ts_hist = time.time()
+    if now_ts_hist - state._last_history_save >= 3600:  # 1 hora
+        try:
+            from predictor import save_history_max
+            save_history_max(state.history_max, city.name)
+            state._last_history_save = now_ts_hist
+        except Exception:
+            pass
 
     # Fetch market (a cada 10 minutos ou se não existe)
     now_city = city_now(city)
@@ -982,6 +1028,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         "size_usdc": first.get("bet_size"),
                         "market_slug": first.get("market_slug", current_market_slug),
                         "strategy": first.get("strategy"),
+                        "bracket": first.get("bracket") or first.get("bracket_label"),
+                        "bracket_label": first.get("bracket_label") or first.get("bracket"),
+                        "order_id": first.get("order_id"),
+                        "shares": first.get("shares"),
+                        "p_ensemble": first.get("p_ensemble"),
                     }
             except Exception:
                 pass
@@ -1004,6 +1055,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         "order_id": getattr(_pos, 'order_id', None),
                         "market_slug": getattr(_pos, 'market_slug', current_market_slug),
                         "strategy": "single",
+                        "bracket": getattr(_pos, 'bracket_label', None),
+                        "bracket_label": getattr(_pos, 'bracket_label', None),
+                        "shares": getattr(_pos, 'shares', None),
                     }
             except Exception:
                 pass
@@ -1089,7 +1143,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         # Se --force-eod-trade activo, ainda não comprou hoje, e estamos a <N horas
         # do day_end, baixar temporariamente o threshold para forçar pelo menos 1 trade.
         # Isto garante >=1 trade/dia em multi-cidade mesmo quando o modelo está conservative.
-        _eod_active = False
+        # _eod_active e _original_threshold_for_restore já inicializados no topo da função
         _original_threshold_for_restore = None
         if (state.force_eod_trade
             and not state.entry.bought
@@ -1105,19 +1159,28 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                       f"thr {current_thr:.2f}→{fallback_thr:.2f}, "
                       f"p={p_ensemble:.2f}, h={h_cur}{R}")
                 # Avisar via Telegram (uma vez por trigger)
+                # FIX 10: guarda defensiva — market pode ser None se fetch falhou
+                _bracket_lbl = '?'
+                _bracket_ask = 0.0
                 if state.last_target_bracket:
                     _bracket_lbl = state.last_target_bracket.get('label', '?')
                     _bracket_ask = state.last_target_bracket.get('ask') or state.last_target_bracket.get('price', 0)
-                    tg_eod = _get_tg()
-                    if tg_eod:
-                        try:
-                            _tg_thread(
-                                tg_eod.alert_eod_fallback,
-                                city.name, p_ensemble, fallback_thr, current_thr,
-                                _bracket_lbl, _bracket_ask,
-                            )
-                        except Exception:
-                            pass
+                elif state.market:
+                    # Tentar encontrar bracket mesmo sem last_target_bracket
+                    _fallback_br = PolymarketFetcher.find_bracket(state.market, running_max)
+                    if _fallback_br:
+                        _bracket_lbl = _fallback_br.get('label', '?')
+                        _bracket_ask = _fallback_br.get('ask') or _fallback_br.get('price', 0)
+                tg_eod = _get_tg()
+                if tg_eod:
+                    try:
+                        _tg_thread(
+                            tg_eod.alert_eod_fallback,
+                            city.name, p_ensemble, fallback_thr, current_thr,
+                            _bracket_lbl, _bracket_ask,
+                        )
+                    except Exception:
+                        pass
             else:
                 # EOD seria activado mas p_ensemble ainda abaixo do fallback_thr
                 print(f"  {DIM}{city.name.upper()} EOD: p={p_ensemble:.2f} < "
@@ -1131,6 +1194,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             forecast_agreement=None,
             slots_so_far=state.slots_so_far,
         )
+        _actions_logged = actions  # capturar para tick_logger
 
         # Processar ações (primeira que tenha size > 0)
         for action in actions:
@@ -1246,6 +1310,19 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         print(f"  {C['green']}{city.name.upper()} BUY: {bracket['label']} "
                               f"@ {ask*100:.1f}¢  ${size_usdc:.2f}  ({action['reason']}){R}")
                         _tg_alert_order_placed(bet_record, trading_mode_str)
+                        # ── NOVO: registar bet no tick_logger ──
+                        if _TICK_LOGGER is not None:
+                            try:
+                                _TICK_LOGGER.log_bet(
+                                    bet_record=bet_record,
+                                    city_name=city.name,
+                                    date_str=city_today.isoformat(),
+                                    trigger="eod_fallback" if _eod_active else "normal",
+                                    p_ensemble=p_ensemble,
+                                    market_volume=float(state.market.get("volume", 0) or 0) if state.market else None,
+                                )
+                            except Exception as e:
+                                print(f"  [tick_logger] log_bet failed: {e}")
                     else:
                         err = result.error or result.status
                         print(f"  {C['red']}{city.name.upper()} BUY REJEITADO: {err}{R}")
@@ -1274,6 +1351,19 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         print(f"  {C['yellow']}{city.name.upper()} BUY [PAPER]: {bracket['label']} "
                               f"@ {ask*100:.1f}¢  ${size_usdc:.2f}  ({action['reason']}){R}")
                         _tg_alert_order_placed(bet_record, trading_mode_str)
+                        # ── NOVO: registar bet no tick_logger ──
+                        if _TICK_LOGGER is not None:
+                            try:
+                                _TICK_LOGGER.log_bet(
+                                    bet_record=bet_record,
+                                    city_name=city.name,
+                                    date_str=city_today.isoformat(),
+                                    trigger="eod_fallback" if _eod_active else "normal",
+                                    p_ensemble=p_ensemble,
+                                    market_volume=float(state.market.get("volume", 0) or 0) if state.market else None,
+                                )
+                            except Exception as e:
+                                print(f"  [tick_logger] log_bet failed: {e}")
                     else:
                         err = result.error or result.status
                         print(f"  {C['red']}{city.name.upper()} BUY [PAPER] REJEITADO: {err}{R}")
@@ -1410,7 +1500,29 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
               f"Mode: SINGLE | "
               f"Bought: {state.entry.bought if state.entry else 'No'}")
 
-    _save_daily_stats(stats, city.name)
+    # ── NOVO: registar tick no logger de telemetria ──
+    # Para análise offline: distribuição de p_ensemble, quase-sinais, evolução do mercado, etc.
+    if _TICK_LOGGER is not None:
+        try:
+            _TICK_LOGGER.log_tick(
+                state=state,
+                city_today=city_today,
+                race_active=False,  # race é controlado no main loop, não no _tick_city
+                race_threshold=None,
+                eod_active=_eod_active,
+                actions=_actions_logged,
+                errors=[],
+            )
+        except Exception as e:
+            print(f"  [tick_logger] log_tick failed: {e}")
+
+    # FIX 4: throttle _save_daily_stats (I/O excessivo — 30s * 2880 ticks/dia)
+    now_ts_save = time.time()
+    if (now_ts_save - state._last_stats_save >= 300  # 5 min
+            or stats.trades  # ou houve trade
+            or stats.stop_losses_triggered):  # ou stop-loss
+        _save_daily_stats(stats, city.name)
+        state._last_stats_save = now_ts_save
     return stats
 
 
@@ -1542,6 +1654,7 @@ def main():
             history_max=init_history_max(city_name),  # ← carregar do disco
             daily_stats=DailyStats(date=city_date(city)),  # ← NOVO
             dashboard_enabled=dashboard_enabled,
+            threshold_override=args.threshold_override,  # ← FIX 1
         )
         state.wu_only = bool(args.wu_only)
 
@@ -1707,6 +1820,78 @@ def main():
                                 )
                                 session_last_dates[city_name] = stats.date
                                 session_stats["total_pnl"] = sum(session_pnl_cumulative.values())
+
+                            # ── NOVO: registar outcome no tick_logger ──
+                            if _TICK_LOGGER is not None:
+                                try:
+                                    # Calcular temp_max_actual
+                                    temp_max_actual = None
+                                    temp_max_hour = None
+                                    if state.slots_so_far:
+                                        valid = [s for s in state.slots_so_far if s.get("temp_c") is not None]
+                                        if valid:
+                                            peak_slot = max(valid, key=lambda s: float(s["temp_c"]))
+                                            temp_max_actual = float(peak_slot["temp_c"])
+                                            temp_max_hour = int(peak_slot["hour"])
+
+                                    # Bracket resolvido: o que contém temp_max_actual
+                                    bracket_resolved = None
+                                    win = None
+                                    if state.market and temp_max_actual is not None:
+                                        for b in state.market.get("brackets", []):
+                                            lo = float(b.get("temp_lo", -99))
+                                            hi = float(b.get("temp_hi", 99))
+                                            if lo <= temp_max_actual <= hi:
+                                                bracket_resolved = b.get("label")
+                                                # Win se comprou este bracket
+                                                if state.entry and getattr(state.entry, "bought", False):
+                                                    import math as _m
+                                                    rec = getattr(state.entry, "record", None) or {}
+                                                    buy_label = rec.get("bracket_label") or rec.get("bracket")
+                                                    if buy_label is not None:
+                                                        win = (buy_label == bracket_resolved)
+                                                    else:
+                                                        # Fallback robusto: usa temp_lo/temp_hi numéricos
+                                                        # do record (igual ao resolve_paper_position)
+                                                        try:
+                                                            plo = float(rec.get("temp_lo", b.get("temp_lo", -99)))
+                                                            phi = float(rec.get("temp_hi", b.get("temp_hi", 99)))
+                                                            peak_int = int(_m.floor(temp_max_actual))
+                                                            if phi >= 99:
+                                                                win = peak_int >= int(_m.floor(plo))
+                                                            elif plo <= -99:
+                                                                win = peak_int <= int(_m.floor(phi))
+                                                            else:
+                                                                win = int(_m.floor(plo)) <= peak_int <= int(_m.floor(phi))
+                                                        except (TypeError, ValueError):
+                                                            win = None
+                                                break
+
+                                    # Stats do dia
+                                    n_buys = len(getattr(stats, "trades", []))
+                                    n_stops = getattr(stats, "stop_losses_triggered", 0)
+                                    bought = bool(state.entry and getattr(state.entry, "bought", False))
+                                    pnl_total = float(getattr(stats, "daily_pnl", 0.0) or 0.0)
+                                    invested = float(getattr(stats, "total_invested", 0.0) or 0.0)
+
+                                    _TICK_LOGGER.log_outcome(
+                                        city_name=city.name,
+                                        date_str=city_today.isoformat(),
+                                        temp_max_actual=temp_max_actual,
+                                        temp_max_hour=temp_max_hour,
+                                        bracket_resolved=bracket_resolved,
+                                        n_buys=n_buys,
+                                        n_sells=0,
+                                        n_stops=n_stops,
+                                        bought=bought,
+                                        win=win,
+                                        pnl_total=pnl_total,
+                                        invested=invested,
+                                        race_used=False,  # race info não disponível aqui
+                                        eod_used=getattr(state, "force_eod_trade", False),
+                                    )
+                                except Exception as e:
+                                    print(f"  [tick_logger] log_outcome failed: {e}")
                     except Exception as e:
                         print(f"  {C['yellow']}{city.name}: PAPER settlement failed: {e}{R}")
 
@@ -1751,25 +1936,33 @@ def main():
                             except Exception:
                                 pass
                     else:
-                        city_bankrolls[city_name] = max(0.0, default_bankroll + stats.daily_pnl)
+                        # FIX 6: acumular PnL no modo PAPER (compound growth realista)
+                        prev_bankroll = city_bankrolls.get(city_name, default_bankroll)
+                        city_bankrolls[city_name] = max(100.0, prev_bankroll + stats.daily_pnl)
 
-                    if is_multi:                                                  # ← NOVO
-                        session_stats["total_trades"] = sum(                    # ← NOVO
-                            len(getattr(s.daily_stats, "trades", []))           # ← NOVO
-                            for s in states.values()                             # ← NOVO
-                            if getattr(s, "daily_stats", None)                  # ← NOVO
-                        )                                                        # ← NOVO
+                    if is_multi:
                         current_stats = daily_stats.get(city_name)
                         if current_stats:
                             current_date = current_stats.date
                             if session_last_dates.get(city_name) != current_date:
+                                # FIX 9: dia mudou — acumular trades do dia anterior
+                                session_stats["total_trades"] += len(
+                                    getattr(states[city_name].daily_stats, "trades", [])
+                                )
                                 session_last_dates[city_name] = current_date
                                 session_last_reported_pnl[city_name] = 0.0
                             current_daily_pnl = float(getattr(current_stats, "daily_pnl", 0.0) or 0.0)
                             delta = current_daily_pnl - session_last_reported_pnl[city_name]
                             session_pnl_cumulative[city_name] += delta
                             session_last_reported_pnl[city_name] = current_daily_pnl
-                        session_stats["total_pnl"] = sum(session_pnl_cumulative.values())  # ← NOVO
+                        # Total trades = acumulado + trades do dia atual de todas as cidades
+                        trades_today = sum(
+                            len(getattr(s.daily_stats, "trades", []))
+                            for s in states.values()
+                            if getattr(s, "daily_stats", None)
+                        )
+                        session_stats["total_trades"] = max(session_stats["total_trades"], trades_today)
+                        session_stats["total_pnl"] = sum(session_pnl_cumulative.values())
 
                 except Exception as e:
                     print(f"  {C['red']}{city.name}: Tick failed: {e}{R}")

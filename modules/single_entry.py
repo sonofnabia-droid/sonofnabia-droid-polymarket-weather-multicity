@@ -18,7 +18,15 @@ from cities.config import CityConfig
 
 
 class SingleEntry:
-    """Single Entry — 1 compra com stop-loss."""
+    """Single Entry — 1 compra com stop-loss.
+
+    Comportamentos importantes:
+      • Filtro de plateau: rejeita compra se temp subiu >0.2°C nos últimos 30min.
+        Isto evita comprar em subida acelerada, mas pode bloquear compras
+        num dia de subida constante. Ajustar stop_loss_delta se necessário.
+      • Após stop-loss: bought=True, sold_by_stop=True → evaluate() bloqueia
+        recompra no mesmo dia. O PnL realizado é registado em record["realized_pnl"].
+    """
 
     is_single = True
 
@@ -178,11 +186,18 @@ class SingleEntry:
             if lo <= target_temp <= hi:
                 best = bracket
                 break
-        if best is None:
-            best = min(
-                brackets,
-                key=lambda b: abs(((float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2) - target_temp),
-            )
+        if best is None and brackets:
+            # Fallback: bracket mais próximo do running_max
+            # Proteger contra brackets com temp_lo/temp_hi malformados
+            valid_brackets = [
+                b for b in brackets
+                if b.get("temp_lo") is not None and b.get("temp_hi") is not None
+            ]
+            if valid_brackets:
+                best = min(
+                    valid_brackets,
+                    key=lambda b: abs(((float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2) - target_temp),
+                )
         return best
 
     def check_stop_loss(self, current_temp: float) -> dict | None:
@@ -222,8 +237,8 @@ class SingleEntry:
         self.sold_by_stop = True
         if self.record is not None:
             self.record["sold_by_stop"] = True
-            self.record["sell_price"] = sell_price
-            self.record["realized_pnl"] = pnl
+            self.record["sell_price"] = float(sell_price) if sell_price is not None else 0.0
+            self.record["realized_pnl"] = float(pnl) if pnl is not None else 0.0
 
     def reset(self) -> None:
         self.bought = False

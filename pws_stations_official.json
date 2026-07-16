@@ -1,0 +1,401 @@
+{
+  "munich": {
+    "city": "munich",
+    "icao": "EDDM",
+    "pws_station_id": "IOBERD38",
+    "pws_location_name": "Oberding",
+    "wu_url": "https://www.wunderground.com/history/daily/de/munich/EDDM",
+    "test": {
+      "ok": true,
+      "n_obs": 222,
+      "temp_min": 16.0,
+      "temp_max": 31.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=23.0\u00b0C, PWS max=31.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "dallas": {
+    "city": "dallas",
+    "icao": "KDFW",
+    "pws_station_id": "KTXEULES41",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/us/tx/dallas/KDFW",
+    "test": {
+      "ok": true,
+      "n_obs": 271,
+      "temp_min": 25.0,
+      "temp_max": 34.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=34.0\u00b0C, PWS max=34.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "ankara": {
+    "city": "ankara",
+    "icao": "LTAC",
+    "pws_station_id": "IANKARA25",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/tr/ankara/LTAC",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 13.0,
+      "temp_max": 33.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=25.0\u00b0C, PWS max=33.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "singapore": {
+    "city": "singapore",
+    "icao": "WSSS",
+    "pws_station_id": "ISINGA249",
+    "pws_location_name": "Singapore",
+    "wu_url": "https://www.wunderground.com/history/daily/sg/singapore/WSSS",
+    "test": {
+      "ok": true,
+      "n_obs": 288,
+      "temp_min": 26.0,
+      "temp_max": 33.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=32.0\u00b0C, PWS max=33.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "jakarta": {
+    "city": "jakarta",
+    "icao": "WIII",
+    "pws_station_id": "IJAKAR3",
+    "pws_location_name": "Tangerang",
+    "wu_url": "https://www.wunderground.com/history/daily/id/jakarta/WIII",
+    "test": {
+      "ok": false,
+      "n_obs": 283,
+      "temp_min": null,
+      "temp_max": null,
+      "error": "sem tempAvg"
+    },
+    "sanity_check": {
+      "ok": null,
+      "msg": ""
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "kuala_lumpur": {
+    "city": "kuala_lumpur",
+    "icao": "WMKK",
+    "pws_station_id": "IDENGK2",
+    "pws_location_name": "Sepang District",
+    "wu_url": "https://www.wunderground.com/history/daily/my/kuala-lumpur/WMKK",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 24.0,
+      "temp_max": 35.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=33.0\u00b0C, PWS max=35.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "lagos": {
+    "city": "lagos",
+    "icao": "DNMM",
+    "pws_station_id": "ILAGOS81",
+    "pws_location_name": "Lagos",
+    "wu_url": "https://www.wunderground.com/history/daily/ng/lagos/DNMM",
+    "test": {
+      "ok": true,
+      "n_obs": 278,
+      "temp_min": 26.0,
+      "temp_max": 31.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=29.0\u00b0C, PWS max=31.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "taipei": {
+    "city": "taipei",
+    "icao": "RCSS",
+    "pws_station_id": "ITAIPE22",
+    "pws_location_name": "Taipei",
+    "wu_url": "https://www.wunderground.com/history/daily/tw/taipei/RCSS",
+    "test": {
+      "ok": true,
+      "n_obs": 288,
+      "temp_min": 23.0,
+      "temp_max": 26.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=32.0\u00b0C, PWS max=26.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "miami": {
+    "city": "miami",
+    "icao": "KMIA",
+    "pws_station_id": "KFLHIALE117",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/us/fl/miami/KMIA",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 28.0,
+      "temp_max": 37.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=32.0\u00b0C, PWS max=37.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "karachi": {
+    "city": "karachi",
+    "icao": "OPKC",
+    "pws_station_id": "IKARAC56",
+    "pws_location_name": "Karachi",
+    "wu_url": "https://www.wunderground.com/history/daily/pk/karachi/OPKC",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 30.0,
+      "temp_max": 33.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=35.0\u00b0C, PWS max=33.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "moscow": {
+    "city": "moscow",
+    "icao": "UUEE",
+    "pws_station_id": "IMOSCO234",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/ru/moscow/UUEE",
+    "test": {
+      "ok": true,
+      "n_obs": 286,
+      "temp_min": 15.0,
+      "temp_max": 16.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=23.0\u00b0C, PWS max=16.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "warsaw": {
+    "city": "warsaw",
+    "icao": "EPWA",
+    "pws_station_id": "IWARSA531",
+    "pws_location_name": "Warsaw",
+    "wu_url": "https://www.wunderground.com/history/daily/pl/warsaw/EPWA",
+    "test": {
+      "ok": true,
+      "n_obs": 258,
+      "temp_min": 13.0,
+      "temp_max": 29.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=23.0\u00b0C, PWS max=29.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "beijing": {
+    "city": "beijing",
+    "icao": "ZBAA",
+    "pws_station_id": "KCASANFR1753",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/cn/beijing/ZBAA",
+    "test": {
+      "ok": true,
+      "n_obs": 284,
+      "temp_min": 14.0,
+      "temp_max": 19.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=31.0\u00b0C, PWS max=19.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "chicago": {
+    "city": "chicago",
+    "icao": "KORD",
+    "pws_station_id": "KILROSEM4",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/us/il/chicago/KORD",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 17.0,
+      "temp_max": 23.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=26.0\u00b0C, PWS max=23.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "madrid": {
+    "city": "madrid",
+    "icao": "LEMD",
+    "pws_station_id": "IMADRI133",
+    "pws_location_name": "Madrid",
+    "wu_url": "https://www.wunderground.com/history/daily/es/madrid/LEMD",
+    "test": {
+      "ok": true,
+      "n_obs": 283,
+      "temp_min": 21.0,
+      "temp_max": 41.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=28.0\u00b0C, PWS max=41.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "tel_aviv": {
+    "city": "tel_aviv",
+    "icao": "LLBG",
+    "pws_station_id": "ICENTRAL248",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/il/tel-aviv/LLBG",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 21.0,
+      "temp_max": 31.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=30.0\u00b0C, PWS max=31.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "phoenix": {
+    "city": "phoenix",
+    "icao": "KPHX",
+    "pws_station_id": "KAZPHOEN1494",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/us/az/phoenix/KPHX",
+    "test": {
+      "ok": true,
+      "n_obs": 284,
+      "temp_min": 28.0,
+      "temp_max": 43.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=41.0\u00b0C, PWS max=43.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "las_vegas": {
+    "city": "las_vegas",
+    "icao": "KLAS",
+    "pws_station_id": "KNVLASVE1714",
+    "pws_location_name": null,
+    "wu_url": "https://www.wunderground.com/history/daily/us/nv/las-vegas/KLAS",
+    "test": {
+      "ok": true,
+      "n_obs": 284,
+      "temp_min": 30.0,
+      "temp_max": 42.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=39.0\u00b0C, PWS max=42.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  },
+  "buenos_aires": {
+    "city": "buenos_aires",
+    "icao": "SAEZ",
+    "pws_station_id": "IMONTEGR27",
+    "pws_location_name": "Ezeiza",
+    "wu_url": "https://www.wunderground.com/history/daily/ar/buenos-aires/SAEZ",
+    "test": {
+      "ok": true,
+      "n_obs": 287,
+      "temp_min": 7.0,
+      "temp_max": 12.0,
+      "error": null
+    },
+    "sanity_check": {
+      "ok": true,
+      "msg": "OK (climatologia m\u00eas 6=15.0\u00b0C, PWS max=12.0\u00b0C)"
+    },
+    "country_match": true,
+    "via_fallback": false,
+    "fallback_tested": []
+  }
+}

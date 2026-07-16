@@ -29,7 +29,18 @@ from cities.config import CityConfig
 from cities.config import CITIES
 
 # URLs base
-WU_BASE     = "https://api.weather.com/v1/location"
+# ENDPOINTS VÁLIDOS (confirmados 2026-06):
+#   /v3/wx/observations/current — observação actual (free key)
+#   /v3/wx/forecast/daily/5day  — forecast 5 dias (free key)
+#   /v2/pws/history/all         — histórico PWS por stationId (free key, units=m)
+#   /v2/pws/observations/current — observação actual PWS (free key, units=m)
+#
+# ENDPOINTS DESCONTINUADOS (não usados — dão 401 Akamai):
+#   /v1/location/.../observations/historical.json
+WU_BASE_OBS_v3  = "https://api.weather.com/v3/wx/observations/current"
+WU_BASE_FC_v3   = "https://api.weather.com/v3/wx/forecast/daily/5day"
+WU_BASE_PWS_HIST = "https://api.weather.com/v2/pws/history/all"
+WU_BASE_PWS_OBS  = "https://api.weather.com/v2/pws/observations/current"
 OM_FORECAST = "https://api.open-meteo.com/v1/forecast"
 OM_ARCHIVE  = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -104,13 +115,19 @@ def make_om_session() -> requests.Session:
 # ══════════════════════════════════════════════════════
 
 def _get_wu_url(city: CityConfig) -> str | None:
-    """Retorna URL WU para a cidade, ou None se não disponível."""
+    """Retorna URL WU para a cidade, ou None se não disponível.
+    AGORA USA ENDPOINT V3 (o v1/location está descontinuado para free keys).
+    """
     if not city.wu_history_path:
         return None
-    return f"{WU_BASE}/{city.wu_history_path}/observations/historical.json"
+    # Não usamos mais URL construido — fetch_wu_day usa WU_BASE_PWS_HIST directamente
+    return WU_BASE_PWS_HIST
 
 
 def _wu_parse_obs(obs_list: list, city_tz: ZoneInfo) -> list[dict]:
+    """Parser para o formato v1/location (descontinuado).
+    Mantido por compatibilidade, mas o novo _v2_pws_parse é o que é usado.
+    """
     clds_map = {
         "CLR": 0, "SKC": 0, "FEW": 12, "SCT": 37,
         "BKN": 75, "OVC": 100, "OBS": 100, "VV": 100, "X": 100,
@@ -151,97 +168,353 @@ def _wu_parse_obs(obs_list: list, city_tz: ZoneInfo) -> list[dict]:
     return rows
 
 
-def fetch_wu_day(city: CityConfig, day: date,
-                api_key: str, session: requests.Session) -> list[dict]:
-    """Busca observações WU para um dia específico da cidade."""
-    wu_url = _get_wu_url(city)
-    if not wu_url:
+def _v3_current_parse(data: dict, city_tz: ZoneInfo) -> dict | None:
+    """Parser para endpoint /v3/wx/observations/current.
+    Retorna 1 observação (a actual) ou None.
+    """
+    if not data or not isinstance(data, dict):
+        return None
+    temp = data.get("temperature")
+    if temp is None:
+        return None
+    try:
+        temp_c = float(temp)
+    except (TypeError, ValueError):
+        return None
+
+    # Timestamp: usar expirationTimeUtc ou obsTimeLocal
+    ts = data.get("validTimeUtc") or data.get("expirationTimeUtc")
+    if ts:
+        try:
+            dt = datetime.fromtimestamp(int(ts), tz=_tz.utc).astimezone(city_tz)
+            hour = dt.hour
+            minute = dt.minute
+        except Exception:
+            hour = datetime.now(tz=city_tz).hour
+            minute = 0
+    else:
+        hour = datetime.now(tz=city_tz).hour
+        minute = 0
+
+    cloud_cover = int(data.get("cloudCover") or 50)
+
+    # Helper para converter com segurança — alguns campos vêm como string noutro formato
+    # (ex: uvDescription = "Low"/"Moderate"/"High" em vez de número)
+    def _safe_float(value, default):
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    # UV: preferir uvIndex (numérico), fallback uvDescription (texto)
+    uv_index = _safe_float(data.get("uvIndex"), None)
+    if uv_index is None:
+        # Mapear uvDescription para valor aproximado
+        uv_desc = str(data.get("uvDescription") or "").lower()
+        uv_map = {
+            "low":         2,
+            "moderate":    4,
+            "high":        7,
+            "very high":  10,
+            "extreme":    11,
+        }
+        uv_index = uv_map.get(uv_desc, 3)
+
+    return {
+        "hour":        hour,
+        "minute":      minute,
+        "temp_c":      temp_c,
+        "humidity":    int(round(_safe_float(data.get("relativeHumidity"), 70))),
+        "cloud_cover": cloud_cover,
+        "wx":          str(data.get("cloudCoverPhrase", "") or ""),
+        "source":      "WU-v3",
+        "dewpoint_c":     _safe_float(data.get("temperatureDewPoint"), temp_c - 10),
+        "pressure_hpa":   _safe_float(data.get("pressureMeanSeaLevel"),
+                                       _safe_float(data.get("pressureAltimeter"), 1013)),
+        "wind_dir_deg":   _safe_float(data.get("windDirection"), 0),
+        "wind_speed_kmh": _safe_float(data.get("windSpeed"), 5.0),
+        "wind_gust_kmh":  _safe_float(data.get("windGust"), 8.0),
+        "uv_index":       uv_index,
+    }
+
+
+def _v2_pws_history_parse(observations: list, city_tz: ZoneInfo) -> list[dict]:
+    """Parser para endpoint /v2/pws/history/all.
+    Retorna lista de observações (uma por hora).
+    """
+    if not observations or not isinstance(observations, list):
         return []
 
-    try:
-        r = session.get(wu_url, params={
-            "apiKey":    api_key,
-            "units":     "m",
-            "startDate": day.strftime("%Y%m%d"),
-        }, timeout=20)
-        r.raise_for_status()
-        obs = r.json().get("observations", [])
-        city_tz = _get_city_timezone(city)
-        rows = _wu_parse_obs(obs, city_tz) if obs else []
-        if rows and city.climatology:
-            clim_max = max(city.climatology.values())
-            sanity_limit = clim_max + 50.0
-            if any(row.get("temp_c", 0.0) > sanity_limit for row in rows):
-                print(
-                    f"  [WU] invalid temperature scale for {city.name}: "
-                    f"max_temp={max(row.get('temp_c', 0.0) for row in rows):.1f} "
-                    f"sanity_limit={sanity_limit:.1f}"
-                )
-                return []
-        return rows
-    except Exception:
+    rows = []
+    for obs in observations:
+        # Timestamp: obsTimeUtc (formato real: "2026-06-17T22:04:52Z")
+        ts = obs.get("obsTimeUtc")
+        if ts:
+            try:
+                # Formato real do WU PWS: "2026-06-17T22:04:52Z"
+                # Python 3.11+ fromisoformat suporta Z; para <3.11 substituir
+                ts_clean = ts.replace("Z", "+00:00") if ts.endswith("Z") else ts
+                dt = datetime.fromisoformat(ts_clean).astimezone(city_tz)
+            except Exception:
+                try:
+                    # Fallback: formato com milisegundos e offset "-0000"
+                    dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%f%z").astimezone(city_tz)
+                except Exception:
+                    continue
+        else:
+            continue
+
+        # Temperatura: metric.tempAvg ou imperial.tempAvg
+        metric = obs.get("metric", {}) or {}
+        temp_c = metric.get("tempAvg") or metric.get("temp")
+        if temp_c is None:
+            # Fallback imperial → converter
+            imperial = obs.get("imperial", {}) or {}
+            temp_f = imperial.get("tempAvg") or imperial.get("temp")
+            if temp_f is None:
+                continue
+            try:
+                temp_c = (float(temp_f) - 32) * 5 / 9
+            except (TypeError, ValueError):
+                continue
+        try:
+            temp_c = float(temp_c)
+        except (TypeError, ValueError):
+            continue
+
+        # Helpers para distinguir 0 de None (0 é valor válido para wind/uv/pressure)
+        def _f(d, key, default):
+            """Float — retorna default se key em falta ou None, mas respeita 0."""
+            v = d.get(key) if d else None
+            return float(v) if v is not None else default
+
+        rows.append({
+            "hour":        dt.hour,
+            "minute":      dt.minute,
+            "temp_c":      temp_c,
+            "humidity":    int(round(_f(obs, "humidityAvg", _f(metric, "humidityAvg", 70)))),
+            "cloud_cover": 50,  # PWS não costuma ter cloud_cover directo
+            "wx":          "",
+            "source":      "WU-PWS",
+            "dewpoint_c":     _f(metric, "dewptAvg", temp_c - 10),
+            "pressure_hpa":   _f(metric, "pressureMax", _f(metric, "pressureMin", 1013.0)),
+            "wind_dir_deg":   _f(obs, "winddirAvg", 0.0),
+            "wind_speed_kmh": _f(metric, "windspeedAvg", 0.0),  # 0 = sem vento (válido!)
+            "wind_gust_kmh":  _f(metric, "windgustAvg", _f(metric, "windgustHigh", 0.0)),
+            "uv_index":       _f(obs, "uvHigh", 0.0),  # 0 = noite ou nublado (válido!)
+        })
+    return rows
+
+
+def fetch_wu_day(city: CityConfig, day: date,
+                api_key: str, session: requests.Session) -> list[dict]:
+    """Busca observações WU para um dia específico usando /v2/pws/history/all.
+
+    Usa o endpoint PWS (Personal Weather Station) — o endpoint v1/location está
+    descontinuado para free keys (dá 401 Akamai).
+    Precisa de city.pws_station_id configurado em cities/config.py.
+    """
+    if not city.wu_history_path:
         return []
+    if not api_key:
+        print(f"  [WU] {city.name}: WU_API_KEY vazia — não consigo buscar dados")
+        return []
+
+    # station_id: tenta city.pws_station_id, senão fallback para icao
+    station_id = getattr(city, 'pws_station_id', None) or city.icao
+    city_tz = _get_city_timezone(city)
+
+    try:
+        r = session.get(WU_BASE_PWS_HIST, params={
+            "apiKey":     api_key,
+            "stationId":  station_id,
+            "format":     "json",
+            "units":      "m",  # IMPORTANTE: "m" (metric), NÃO "metric"
+            "date":       day.strftime("%Y%m%d"),
+        }, timeout=20)
+    except requests.exceptions.Timeout:
+        print(f"  [WU] {city.name}: TIMEOUT (>20s) a pedir histórico PWS station={station_id}")
+        return []
+    except requests.exceptions.ConnectionError as e:
+        print(f"  [WU] {city.name}: ERRO DE CONEXAO: {e}")
+        return []
+    except Exception as e:
+        print(f"  [WU] {city.name}: EXCEPCAO no request: {type(e).__name__}: {e}")
+        return []
+
+    # Verificar HTTP status
+    if r.status_code != 200:
+        status_msgs = {
+            401: "API key invalida ou expirada",
+            403: "API key sem permissões / IP bloqueado",
+            404: "Station PWS não encontrada — verifica pws_station_id",
+            429: "RATE LIMIT excedido — espera antes de tentar",
+            500: "Erro interno do servidor WU",
+        }
+        msg = status_msgs.get(r.status_code, "erro HTTP")
+        body_preview = r.text[:300] if r.text else "(sem body)"
+        print(f"  [WU] {city.name}: HTTP {r.status_code} — {msg}")
+        print(f"  [WU] station={station_id} date={day.isoformat()}")
+        print(f"  [WU] Body: {body_preview}")
+        return []
+
+    # Parse JSON
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"  [WU] {city.name}: JSON invalido: {e}")
+        print(f"  [WU] Body (primeiros 500 chars): {r.text[:500]}")
+        return []
+
+    # Formato esperado: {"observations": [...], "metadata": {...}}
+    observations = data.get("observations", []) if isinstance(data, dict) else []
+    if not observations:
+        # Pode ser erro reportado pelo WU
+        if isinstance(data, dict) and data.get("errors"):
+            print(f"  [WU] {city.name}: API errors: {data['errors']}")
+        else:
+            print(f"  [WU] {city.name}: 200 OK mas sem 'observations' no response")
+            print(f"  [WU] Top keys: {list(data.keys())[:10] if isinstance(data, dict) else type(data)}")
+            print(f"  [WU] Body (primeiros 500 chars): {r.text[:500]}")
+        return []
+
+    rows = _v2_pws_history_parse(observations, city_tz)
+    if not rows:
+        print(f"  [WU] {city.name}: 200 OK com {len(observations)} observations mas parser não extraiu nenhuma")
+        return []
+
+    # Sanity check de temperatura
+    if city.climatology:
+        clim_max = max(city.climatology.values())
+        sanity_limit = clim_max + 50.0
+        if any(row.get("temp_c", 0.0) > sanity_limit for row in rows):
+            print(
+                f"  [WU] {city.name}: invalid temperature scale "
+                f"max_temp={max(row.get('temp_c', 0.0) for row in rows):.1f} "
+                f"sanity_limit={sanity_limit:.1f}"
+            )
+            return []
+    return rows
 
 
 def fetch_wu_latest(city: CityConfig, api_key: str,
                    session: requests.Session) -> dict | None:
-    """Observação mais recente do dia de hoje via WU."""
-    rows = fetch_wu_day(city, _city_date(city), api_key, session)
-    if not rows:
+    """Observação mais recente via /v3/wx/observations/current.
+
+    Usa geocode (lat,lon) — não precisa de stationId PWS.
+    Este endpoint é confirmado funcionar com free keys (passa do Akamai).
+    """
+    if not city.wu_history_path:
         return None
-    return max(rows, key=lambda r: r["hour"] * 60 + r["minute"])
+    if not api_key:
+        print(f"  [WU] {city.name}: WU_API_KEY vazia")
+        return None
+
+    city_tz = _get_city_timezone(city)
+    geocode = f"{city.latitude},{city.longitude}"
+
+    try:
+        r = session.get(WU_BASE_OBS_v3, params={
+            "apiKey":   api_key,
+            "geocode":  geocode,
+            "units":    "m",
+            "language": "en-US",
+            "format":   "json",
+        }, timeout=15)
+    except requests.exceptions.Timeout:
+        print(f"  [WU] {city.name}: TIMEOUT (>15s) a pedir current obs")
+        return None
+    except requests.exceptions.ConnectionError as e:
+        print(f"  [WU] {city.name}: ERRO DE CONEXAO: {e}")
+        return None
+    except Exception as e:
+        print(f"  [WU] {city.name}: EXCEPCAO: {type(e).__name__}: {e}")
+        return None
+
+    if r.status_code != 200:
+        status_msgs = {
+            400: "parâmetros em falta (verificar language/geocode)",
+            401: "API key invalida",
+            403: "API key sem permissões",
+            404: "geocode não encontrado",
+            429: "RATE LIMIT excedido",
+        }
+        msg = status_msgs.get(r.status_code, "erro HTTP")
+        body_preview = r.text[:300] if r.text else ""
+        print(f"  [WU] {city.name}: HTTP {r.status_code} — {msg}")
+        if body_preview:
+            print(f"  [WU] Body: {body_preview}")
+        return None
+
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"  [WU] {city.name}: JSON invalido: {e}")
+        return None
+
+    obs = _v3_current_parse(data, city_tz)
+    if obs is None:
+        print(f"  [WU] {city.name}: 200 OK mas parser não extraiu observação")
+        print(f"  [WU] Top keys: {list(data.keys())[:10] if isinstance(data, dict) else type(data)}")
+    return obs
 
 
 def fetch_wu_forecast_max(city: CityConfig, api_key: str,
                           session: requests.Session) -> dict | None:
-    """Previsão WU de temperatura máxima para hoje."""
+    """Previsão WU de temperatura máxima para hoje via /v3/wx/forecast/daily/5day.
+
+    Endpoint confirmado funcionar com free keys.
+    """
     if not city.wu_history_path:
         return None
+    if not api_key:
+        return None
 
-    url = "https://api.weather.com/v3/wx/forecast/daily/5day"
     try:
-        r = session.get(url, params={
+        r = session.get(WU_BASE_FC_v3, params={
             "apiKey":   api_key,
             "geocode":  f"{city.latitude},{city.longitude}",
             "units":    "m",
             "language": "en-US",
             "format":   "json",
         }, timeout=15)
-        r.raise_for_status()
-        d = r.json()
-
-        if not d:
-            return None
-
-        t_max = None
-        t_min = None
-
-        # Caminho 1: formato directo
-        if "temperatureMax" in d and "temperatureMin" in d:
-            t_max_list = d.get("temperatureMax", [None])
-            t_min_list = d.get("temperatureMin", [None])
-            t_max = (int(round(float(t_max_list[0])))
-                     if t_max_list and t_max_list[0] is not None else None)
-            t_min = (int(round(float(t_min_list[0])))
-                     if t_min_list and t_min_list[0] is not None else None)
-
-        # Caminho 2: formato nested daily
-        elif "daily" in d:
-            daily      = d["daily"]
-            t_max_list = daily.get("temperatureMax", [None])
-            t_min_list = daily.get("temperatureMin", [None])
-            t_max = (int(round(float(t_max_list[0])))
-                     if t_max_list and t_max_list[0] is not None else None)
-            t_min = (int(round(float(t_min_list[0])))
-                     if t_min_list and t_min_list[0] is not None else None)
-
-        if t_max is None:
-            return None
-
-        return {"temp_max": t_max, "temp_min": t_min, "source": "WU"}
-
-    except Exception:
+    except Exception as e:
+        print(f"  [WU] {city.name}: forecast fetch failed: {type(e).__name__}: {e}")
         return None
+
+    if r.status_code != 200:
+        print(f"  [WU] {city.name}: forecast HTTP {r.status_code}")
+        return None
+
+    try:
+        d = r.json()
+    except Exception as e:
+        print(f"  [WU] {city.name}: forecast JSON invalido: {e}")
+        return None
+
+    if not d or not isinstance(d, dict):
+        return None
+
+    # Formato v3: {calendarDayTemperatureMax: [...], calendarDayTemperatureMin: [...]}
+    t_max_list = d.get("calendarDayTemperatureMax") or d.get("temperatureMax") or []
+    t_min_list = d.get("calendarDayTemperatureMin") or d.get("temperatureMin") or []
+
+    if not t_max_list:
+        return None
+
+    t_max = t_max_list[0] if t_max_list[0] is not None else None
+    t_min = t_min_list[0] if t_min_list and t_min_list[0] is not None else None
+
+    if t_max is None:
+        return None
+
+    return {
+        "temp_max": int(round(float(t_max))),
+        "temp_min": int(round(float(t_min))) if t_min is not None else None,
+        "source":   "WU-v3",
+    }
 
 
 # ══════════════════════════════════════════════════════
@@ -373,7 +646,10 @@ def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
 def bootstrap_today(city: CityConfig, api_key: str,
                    session: requests.Session, verbose: bool = True) -> tuple[dict, list[dict]]:
     """
-    Carrega observações de hoje (WU se disponível, senão Open-Meteo).
+    Carrega observações de hoje via WU.
+    SEM FALLBACK PARA OPEN-METEO — se WU falha, retorna ({}, []) e o caller
+    trata o erro. Os prints do fetch_wu_day já vão mostrar a causa real.
+
     Retorna (series_dict, slots_list).
     """
     global _bootstrap_rows_cache, _bootstrap_obs_min
@@ -381,7 +657,7 @@ def bootstrap_today(city: CityConfig, api_key: str,
     today = _city_date(city)
     city_name = city.name
 
-    # Tenta WU primeiro se disponível
+    # Tenta WU (única fonte)
     if city.wu_history_path:
         if verbose:
             print(f"  WU {city.icao} histórico {today}...", end=" ", flush=True)
@@ -425,9 +701,16 @@ def bootstrap_today(city: CityConfig, api_key: str,
                         "uv_index":       r.get("uv_index",       3),
                     })
             return series, slots
+        else:
+            # WU falhou — fetch_wu_day já imprimiu a causa real
+            if verbose:
+                print(f"FALHOU (ver mensagens [WU] acima)")
+            return {}, []
 
-    # Fallback para Open-Meteo
-    return bootstrap_om_today(city, session, verbose=verbose)
+    # Cidade sem WU history path (Dallas, Ankara, etc.) — não suportada em modo WU-only
+    if verbose:
+        print(f"  {city_name}: sem WU history path configurado — sem dados")
+    return {}, []
 
 
 def bootstrap_om_today(city: CityConfig, session: requests.Session, verbose: bool = True) -> tuple[dict, list[dict]]:

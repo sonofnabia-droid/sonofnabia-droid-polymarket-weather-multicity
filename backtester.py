@@ -44,7 +44,7 @@ from rich.table import Table
 from rich import box as rich_box
 
 from cities.config import CityConfig, get_city, CITIES
-from predictor import set_city, load_models, predict_ensemble
+from predictor import set_city, load_models, predict_ensemble, build_features
 from weather import ceil_slot, is_plausible_temp
 from modules.single_entry import SingleEntry
 
@@ -376,6 +376,7 @@ def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
 
 
 def _compute_sharpe_sortino(capital_history: list) -> tuple:
+    """Sharpe/Sortino anualizados a 365 dias (Polymarket opera todos os dias)."""
     if not capital_history or len(capital_history) < 2:
         return 0.0, 0.0
     caps = np.array([c for _, c in capital_history], dtype=float)
@@ -387,7 +388,7 @@ def _compute_sharpe_sortino(capital_history: list) -> tuple:
     rets = (curr[valid] - prev[valid]) / prev[valid]
     if len(rets) == 0 or rets.std() < 1e-8:
         return 0.0, 0.0
-    ann = np.sqrt(252)
+    ann = np.sqrt(365)  # Polymarket: 365 dias/ano, não 252
     sharpe = float(rets.mean() / rets.std() * ann)
     downside = rets[rets < 0]
     if len(downside) > 1 and downside.std() > 1e-8:
@@ -502,7 +503,42 @@ def run_backtest(
 
             fc_agreement = {"valid": True}  # assumimos forecasts concordam
 
-            for _, row in day_df.iterrows():
+            # Precomputar predições em batch para o dia para acelerar o backtest
+            day_slots_prep = []
+            features_list = []
+            valid_indices = []
+            hour_min = city.hour_min if city.hour_min is not None else 6
+            for idx, (_, row) in enumerate(day_df.iterrows()):
+                h = int(row["hour"])
+                s = int(row["slot30"])
+                t = float(row["temp_c"])
+                slot_entry = {
+                    "hour": h, "slot30": s, "temp_c": t,
+                    "humidity": float(row["humidity"]),
+                    "cloud_cover": float(row["cloud_cover"]),
+                    "dewpoint_c": float(row["dewpoint_c"]),
+                    "pressure_hpa": float(row["pressure_hpa"]),
+                    "wind_dir_deg": float(row["wind_dir_deg"]),
+                    "wind_speed_kmh": float(row["wind_speed_kmh"]),
+                    "wind_gust_kmh": float(row["wind_gust_kmh"]),
+                    "uv_index": float(row["uv_index"]),
+                }
+                day_slots_prep.append(slot_entry)
+                if h < city.day_start or len(day_slots_prep) < 4 or h < hour_min:
+                    continue
+                current_extra = {**slot_entry, "prev_7d_avg_max": prev7_map.get(d, 15.0)}
+                feat = build_features(day_slots_prep.copy(), current_extra, month, doy, models.get("prior_map", {}))
+                features_list.append([feat.get(col, 0.0) for col in models["feat_cols"]])
+                valid_indices.append(idx)
+
+            p_ens_list = [0.0] * len(day_df)
+            if features_list:
+                X_batch = np.array(features_list, dtype=np.float32)
+                preds = models["model_lgb"].predict_proba(X_batch)[:, 1]
+                for p_idx, val_idx in enumerate(valid_indices):
+                    p_ens_list[val_idx] = float(np.clip(preds[p_idx], 0.0, 1.0))
+
+            for idx_in_day, (_, row) in enumerate(day_df.iterrows()):
                 h = int(row["hour"])
                 s = int(row["slot30"])
                 t = float(row["temp_c"])
@@ -520,18 +556,15 @@ def run_backtest(
                 }
                 slots_so_far.append(slot_entry)
 
-                if h < city.day_start or len(slots_so_far) < 4:
+                hour_min = city.hour_min if city.hour_min is not None else 6
+                if h < city.day_start or len(slots_so_far) < 4 or h < hour_min:
                     continue
 
                 running_max = max(sl["temp_c"] for sl in slots_so_far)
                 if np.isnan(running_max) or np.isinf(running_max):
                     running_max = 15.0
 
-                current_extra = {**slot_entry, "prev_7d_avg_max": prev7_map.get(d, 15.0)}
-
-                # zscore_detector=None → predict_ensemble só usa LightGBM
-                ens = predict_ensemble(models, slots_so_far, current_extra, month, doy, None)
-                p_ens = ens.get("p_ensemble", 0.0)
+                p_ens = p_ens_list[idx_in_day]
 
                 brackets = sim_mkt.get_brackets(p_ens, running_max, h)
                 market_sim = {"brackets": brackets}
@@ -634,9 +667,11 @@ def run_backtest(
             cap_before = capital
             capital += single_pnl
             capital_after_pnl = capital
-            capital = max(capital, 0.0)
+            capital = max(capital, 100.0)  # floor a $100 para permitir recuperação
 
             if ordertype == "percent" and mode == "single" and entry_single.bought:
+                # clip_loss = quanto foi "perdido" pelo floor (se capital_after_pnl < 100)
+                clip_loss = round(100.0 - capital_after_pnl, 2) if capital_after_pnl < 100.0 else 0.0
                 capital_flow_debug.append({
                     "date": d,
                     "cap_before": round(cap_before, 2),
@@ -647,7 +682,7 @@ def run_backtest(
                     "single_pnl": round(single_pnl, 2),
                     "cap_after_pnl": round(capital_after_pnl, 2),
                     "cap_clipped": round(capital, 2),
-                    "clip_loss": round(capital - capital_after_pnl, 2),
+                    "clip_loss": clip_loss,
                 })
 
             capital_history.append((d, capital))
@@ -899,7 +934,8 @@ def print_dashboard(
 
             # Análise económica: payoff vs perda, EV por trade
             avg_ask_win = wins_df["single_ask"].mean() if len(wins_df) else 0
-            avg_payoff_per_dollar = (1 / avg_ask_win - 1) if avg_ask_win > 0 else 0
+            # Proteger contra ask muito baixo (ruído de mercado pode ir < 0.01)
+            avg_payoff_per_dollar = (1 / max(avg_ask_win, 0.001) - 1) if avg_ask_win > 0 else 0
             win_pct = len(wins_df) / len(trades_df) * 100
 
             ev_per_dollar = (
