@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
+import threading
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, predict_ensemble, compute_prev7, init_history_max
 from weather import (
@@ -303,8 +304,8 @@ class CityState:
     market: dict | None = None
     fetcher: PolymarketFetcher | None = None
     wu_key: str = ""
-    wu_sess = None
-    om_sess = None
+    wu_sess: any = None
+    om_sess: any = None
     clob: ClobClient | None = None
     trading_mode: TradingMode = TradingMode.PAPER
     latest_obs: dict | None = None
@@ -321,12 +322,11 @@ class CityState:
     _settled_position_ids: set[str] = field(default_factory=set)
     _bootstrap_pending: bool = True
     dashboard_enabled: bool = False
-    # ── NOVOS: filtros e EOD fallback ──
+    # ── NOVOS: filtros ──
     max_buy_ask: float = 0.85
-    force_eod_trade: bool = False
-    eod_fallback_threshold: float = 0.5
-    eod_start_hours_before_close: int = 2
     _last_near_signal_ts: float = 0.0
+    # ── FIX bankroll PAPER: tracking de delta ──
+    _last_applied_pnl: float = 0.0
     # ── FIX 1: guardar threshold_override para reaplicar no reset diário ──
     threshold_override: Optional[float] = None
     # ── FIX 4: throttle para _save_daily_stats ──
@@ -335,6 +335,8 @@ class CityState:
     _last_bootstrap_attempt: float = 0.0
     # ── FIX 7: throttle para persistir history_max ──
     _last_history_save: float = 0.0
+    # ── FIX C2: lock para thread safety (Telegram polling vs main loop) ──
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
 # ════════════════════════════════════════════════════
 #  HELPERS
@@ -354,6 +356,7 @@ def bot_now() -> datetime:
 
 def _save_daily_stats(stats: DailyStats, city_name: str) -> None:
     log_path = LOG_DIR / f"{city_name}_{stats.date}.json"
+    tmp_path = LOG_DIR / f".tmp_{city_name}_{stats.date}_{int(time.time()*1000)}.json"
     data = {
         "date": str(stats.date),
         "trades": len(stats.trades),
@@ -361,7 +364,16 @@ def _save_daily_stats(stats: DailyStats, city_name: str) -> None:
         "daily_pnl": round(stats.daily_pnl, 2),
         "stop_losses_triggered": stats.stop_losses_triggered,
     }
-    log_path.write_text(json.dumps(data, indent=2))
+    try:
+        tmp_path.write_text(json.dumps(data, indent=2))
+        tmp_path.replace(log_path)
+    except Exception as e:
+        print(f"  {C['yellow']}{city_name}: falha a guardar stats: {e}{R}")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
 
 def _append_bet_record(bet_record: dict, city_name: str, d: date) -> None:
@@ -448,13 +460,18 @@ def _settle_paper_positions_for_day(state: CityState, city_today: date) -> float
         if not hist_path.exists():
             return None
 
-        target_key = target_day.strftime("%d/%m/%Y")
+        # Tenta múltiplos formatos comuns de data para evitar falhas de parsing
+        target_keys = {
+            target_day.strftime("%Y-%m-%d"), # ISO 8601
+            target_day.strftime("%d/%m/%Y"), # EU
+            target_day.strftime("%m/%d/%Y"), # US
+        }
         max_temp: Optional[float] = None
         try:
             with hist_path.open("r", encoding="utf-8", newline="") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if str(row.get("date", "")).strip() != target_key:
+                    if str(row.get("date", "")).strip() not in target_keys:
                         continue
                     t_raw = row.get("temp_c")
                     if t_raw in (None, ""):
@@ -810,7 +827,6 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     city_today = city_date(city)
 
     # ── Variáveis para tick_logger (inicializadas c/ defaults) ──
-    _eod_active = False
     _actions_logged: list = []
 
     # Reset diário (Fix 11) + FIX 2: guardar stats anterior antes de resetar
@@ -846,7 +862,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             state._last_bootstrap_attempt = now_ts_boot
             try:
                 _bootstrap_state_today(state)
-                state._bootstrap_pending = False
+                # Só desativa o flag se realmente resolveu o problema
+                if len(state.slots_so_far) >= 4:
+                    state._bootstrap_pending = False
             except Exception:
                 pass  # mantém pending, tenta de novo daqui a 60s
 
@@ -941,7 +959,12 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                 f"  {C['yellow']}{city.name}: clamped late high temp "
                                 f"at {h_slot:02d}:{s30:02d}{R}"
                             )
+                            # Guardar temp real para o modelo usar
+                            s["temp_c_real"] = slot_entry["temp_c"]
                             slot_entry["temp_c"] = s["temp_c"]
+                        else:
+                            # Sincronizar temp real quando não há clamp
+                            s["temp_c_real"] = slot_entry["temp_c"]
                         s["date"] = city_today
                         s["temp_c"] = slot_entry["temp_c"]
                         if "hour" in slot_entry:
@@ -1075,6 +1098,21 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             print(f"  {C['yellow']}{city.name}: Posição existente detectada "
                   f"— a saltar entrada{R}")
 
+            # Verificar se stop-loss já foi disparado antes do restart
+            if state.slots_so_far and state.entry.record:
+                current_temp = max(s["temp_c"] for s in state.slots_so_far)
+                sl_check = state.entry.check_stop_loss(current_temp)
+                if sl_check:
+                    # Marcar como vendida sem enviar alerta duplicado
+                    state.entry.sold_by_stop = True
+                    state.entry.record["sold_by_stop"] = True
+                    if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+                        state.entry._stop_loss_blocked_alerted = True
+                    print(f"  {C['yellow']}{city.name}: stop-loss já disparado antes do restart — marcando como vendida{R}")
+
+            if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+                state.entry._stop_loss_blocked_alerted = False
+
     # Predição e entrada
     h_now = city_now(city).hour
     m_now = city_now(city).minute
@@ -1138,53 +1176,6 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         state.last_target_bracket = PolymarketFetcher.find_bracket(
             state.market, running_max
         )
-
-        # ── NOVO: EOD Fallback ──
-        # Se --force-eod-trade activo, ainda não comprou hoje, e estamos a <N horas
-        # do day_end, baixar temporariamente o threshold para forçar pelo menos 1 trade.
-        # Isto garante >=1 trade/dia em multi-cidade mesmo quando o modelo está conservative.
-        # _eod_active e _original_threshold_for_restore já inicializados no topo da função
-        _original_threshold_for_restore = None
-        if (state.force_eod_trade
-            and not state.entry.bought
-            and h_cur >= city.day_end - state.eod_start_hours_before_close
-            and p_ensemble > 0.0):
-            current_thr = float(getattr(state.entry, 'threshold', 0.65) or 0.65)
-            fallback_thr = current_thr * state.eod_fallback_threshold
-            if p_ensemble >= fallback_thr:
-                _original_threshold_for_restore = current_thr
-                state.entry.threshold = fallback_thr
-                _eod_active = True
-                print(f"  {C['yellow']}{city.name.upper()} EOD FALLBACK: "
-                      f"thr {current_thr:.2f}→{fallback_thr:.2f}, "
-                      f"p={p_ensemble:.2f}, h={h_cur}{R}")
-                # Avisar via Telegram (uma vez por trigger)
-                # FIX 10: guarda defensiva — market pode ser None se fetch falhou
-                _bracket_lbl = '?'
-                _bracket_ask = 0.0
-                if state.last_target_bracket:
-                    _bracket_lbl = state.last_target_bracket.get('label', '?')
-                    _bracket_ask = state.last_target_bracket.get('ask') or state.last_target_bracket.get('price', 0)
-                elif state.market:
-                    # Tentar encontrar bracket mesmo sem last_target_bracket
-                    _fallback_br = PolymarketFetcher.find_bracket(state.market, running_max)
-                    if _fallback_br:
-                        _bracket_lbl = _fallback_br.get('label', '?')
-                        _bracket_ask = _fallback_br.get('ask') or _fallback_br.get('price', 0)
-                tg_eod = _get_tg()
-                if tg_eod:
-                    try:
-                        _tg_thread(
-                            tg_eod.alert_eod_fallback,
-                            city.name, p_ensemble, fallback_thr, current_thr,
-                            _bracket_lbl, _bracket_ask,
-                        )
-                    except Exception:
-                        pass
-            else:
-                # EOD seria activado mas p_ensemble ainda abaixo do fallback_thr
-                print(f"  {DIM}{city.name.upper()} EOD: p={p_ensemble:.2f} < "
-                      f"fallback={fallback_thr:.2f} (ainda sem forçar){R}")
 
         actions = state.entry.evaluate(
             p_ensemble=p_ensemble,
@@ -1262,7 +1253,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     "ask":           ask,
                     "size_usdc":     size_usdc,
                     "bet_size":      size_usdc,         # alias para compat
-                    "shares":        size_usdc / ask if ask > 0 else 0,
+                    "shares":        math.floor(size_usdc / ask) if ask > 0 else 0,
                     "temp_lo":       bracket.get("temp_lo"),
                     "temp_hi":       bracket.get("temp_hi"),
                     "token_id":      token_id,
@@ -1317,7 +1308,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                     bet_record=bet_record,
                                     city_name=city.name,
                                     date_str=city_today.isoformat(),
-                                    trigger="eod_fallback" if _eod_active else "normal",
+                                    trigger="normal",
                                     p_ensemble=p_ensemble,
                                     market_volume=float(state.market.get("volume", 0) or 0) if state.market else None,
                                 )
@@ -1358,7 +1349,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                     bet_record=bet_record,
                                     city_name=city.name,
                                     date_str=city_today.isoformat(),
-                                    trigger="eod_fallback" if _eod_active else "normal",
+                                    trigger="normal",
                                     p_ensemble=p_ensemble,
                                     market_volume=float(state.market.get("volume", 0) or 0) if state.market else None,
                                 )
@@ -1369,13 +1360,6 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         print(f"  {C['red']}{city.name.upper()} BUY [PAPER] REJEITADO: {err}{R}")
 
                 break  # Apenas uma ação por tick
-
-        # ── NOVO: restaurar threshold original após EOD fallback ──
-        # O evaluate() já correu; se gerou action, o buy foi processado (ou não).
-        # Temos de repor o threshold para não afectar o próximo tick.
-        if _eod_active and _original_threshold_for_restore is not None:
-            state.entry.threshold = _original_threshold_for_restore
-            _eod_active = False
 
     # ─── STOP-LOSS CHECK ────────────────────────────
     if state.entry and state.clob and state.latest_obs:
@@ -1395,8 +1379,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         if b.get("token_id") == pos_token
                     ]
                 if not matching:
-                    pos_lo = float(pos.get("temp_lo", 0))
-                    pos_hi = float(pos.get("temp_hi", 0))
+                    pos_lo = float(pos.get("temp_lo") or 0)
+                    pos_hi = float(pos.get("temp_hi") or 0)
                     matching = [
                         b for b in state.market.get("brackets", [])
                         if abs(float(b.get("temp_lo", 0)) - pos_lo) < 0.1
@@ -1455,9 +1439,10 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                             # ── Caso 3b: tentar vender ──
                             sell_result = state.clob.sell_yes(poll[0], bid_price)
                             if sell_result.success:
-                                entry_ask = pos.get("ask", 0)
-                                shares = pos.get("size_usdc", 0) / entry_ask if entry_ask > 0 else 0
-                                realized_pnl = shares * bid_price - pos.get("size_usdc", 0)
+                                entry_ask = pos.get("ask") or 0
+                                size_usdc = pos.get("size_usdc") or 0
+                                shares = size_usdc / entry_ask if entry_ask > 0 else 0
+                                realized_pnl = shares * bid_price - size_usdc
 
                                 state.entry.mark_sold_by_stop(bid_price, realized_pnl)
                                 settled_id = str(pos.get("order_id") or pos.get("timestamp") or pos.get("bracket_label") or "")
@@ -1509,7 +1494,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 city_today=city_today,
                 race_active=False,  # race é controlado no main loop, não no _tick_city
                 race_threshold=None,
-                eod_active=_eod_active,
+                eod_active=False,
                 actions=_actions_logged,
                 errors=[],
             )
@@ -1558,15 +1543,7 @@ def main():
                         help="Ask máximo para comprar em fracção 0..1 (default 0.85=85¢). "
                              "Blocks buys acima deste valor — brackets quase certos têm "
                              "payout mínimo.")
-    parser.add_argument("--force-eod-trade", action="store_true",
-                        help="Força buy nas últimas N horas do dia se nenhuma bet foi feita. "
-                             "Útil para garantir >=1 trade/dia em multi-cidade.")
-    parser.add_argument("--eod-fallback-threshold", type=float, default=0.5,
-                        help="Fração do threshold original para EOD fallback (default 0.5). "
-                             "Ex: thr=0.70, fallback=0.35. P(pico)>=0.35 dispara buy.")
-    parser.add_argument("--eod-start-hours-before-close", type=int, default=2,
-                        help="Horas antes do day_end para começar EOD fallback (default 2)")
-    # ── NOVOS: Top-K Race mode (alternativa ao EOD, sem forçar) ──
+    # ── NOVOS: Top-K Race mode ──
     parser.add_argument("--race-top-k", type=int, default=0,
                         help="Top-K Race mode: a cada N minutos, ordena todas as cidades "
                              "não compradas por p_ensemble desc e baixa temporariamente o "
@@ -1658,11 +1635,8 @@ def main():
         )
         state.wu_only = bool(args.wu_only)
 
-        # ── NOVO: configurar filtros e EOD fallback no state ──
+        # ── NOVO: configurar filtros no state ──
         state.max_buy_ask = float(args.max_buy_ask)
-        state.force_eod_trade = bool(args.force_eod_trade)
-        state.eod_fallback_threshold = float(args.eod_fallback_threshold)
-        state.eod_start_hours_before_close = int(args.eod_start_hours_before_close)
         state._last_near_signal_ts = 0.0
 
         import os
@@ -1748,10 +1722,8 @@ def main():
         f"  Intervalo: <b>{args.interval}s</b>\n"
         f"  Dashboard TG: <b>every {args.tg_interval}s</b>"
         + (f"\n  Threshold override: <b>{args.threshold_override}</b>" if args.threshold_override else "")
-        + (f"\n  ⏰ EOD fallback: <b>ON</b> (fallback thr={args.eod_fallback_threshold}x, "
-           f"start {args.eod_start_hours_before_close}h antes do close)" if args.force_eod_trade else "")
-        + (f"\n  🏁 Race mode: <b>ON</b> (top-K={args.race_top_k}, "
-           f"min_thr={args.race_min_threshold*100:.0f}%, "
+        + (f"\n  Race mode: top-{args.race_top_k} "
+           f"(min_thr={args.race_min_threshold*100:.0f}%, "
            f"eval every {args.race_eval_interval}s)" if args.race_top_k > 0 else "")
         + (f"\n  Max buy ask: <b>{args.max_buy_ask*100:.0f}¢</b>")
     )
@@ -1888,7 +1860,7 @@ def main():
                                         pnl_total=pnl_total,
                                         invested=invested,
                                         race_used=False,  # race info não disponível aqui
-                                        eod_used=getattr(state, "force_eod_trade", False),
+                                        eod_used=False,
                                     )
                                 except Exception as e:
                                     print(f"  [tick_logger] log_outcome failed: {e}")
@@ -1936,9 +1908,12 @@ def main():
                             except Exception:
                                 pass
                     else:
-                        # FIX 6: acumular PnL no modo PAPER (compound growth realista)
+                        # FIX: bankroll PAPER — aplicar apenas o delta desde a última vez
                         prev_bankroll = city_bankrolls.get(city_name, default_bankroll)
-                        city_bankrolls[city_name] = max(100.0, prev_bankroll + stats.daily_pnl)
+                        last_applied = getattr(state, '_last_applied_pnl', 0.0)
+                        delta = stats.daily_pnl - last_applied
+                        city_bankrolls[city_name] = max(100.0, prev_bankroll + delta)
+                        state._last_applied_pnl = stats.daily_pnl
 
                     if is_multi:
                         current_stats = daily_stats.get(city_name)

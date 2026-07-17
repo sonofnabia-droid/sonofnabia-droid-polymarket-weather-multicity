@@ -37,9 +37,20 @@ import os
 import json
 import requests
 import threading
+import time
 from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+
+def _esc(text: str) -> str:
+    """Escapa caracteres HTML para Telegram."""
+    if not text:
+        return ""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
 
 try:
     from dotenv import load_dotenv
@@ -67,6 +78,8 @@ class TG:
         self._last_p_zone = -1
         self.updater = None
         self.polling_active = False
+        # FIX C2: lock para thread safety entre polling thread e main loop
+        self._lock = threading.Lock()
         
         if not self.enabled:
             print("  [TG] TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não definidos — "
@@ -139,9 +152,15 @@ class TG:
         threading.Thread(target=_thread, daemon=True).start()
         return True
 
-    def stop_polling(self):
-        """Para o polling."""
+    def stop_polling(self, timeout: float = 5.0):
+        """Para o polling com timeout."""
         self.polling_active = False
+        # Dar tempo ao loop de asyncio para detectar a flag
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self._app or not self._app.updater.running:
+                break
+            time.sleep(0.1)
         print("  [TG] Polling parado")
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -336,7 +355,7 @@ class TG:
                 "<b>Detalhes dos trades:</b>"
             ]
             
-            # Adicionar detalhes de cada trade
+# Adicionar detalhes de cada trade
             for i, event in enumerate(today_events[:5]):  # Mostrar até 5 trades
                 city = event.get('city', 'Unknown')
                 bracket = event.get('bracket_label', 'Unknown')
@@ -344,7 +363,7 @@ class TG:
                 icon = "✅" if pnl > 0 else "❌"
                 
                 lines.append(
-                    f"  {icon} {city}: {bracket} (${pnl:+.2f})"
+                    f"  {icon} {_esc(city)}: {_esc(bracket)} (${pnl:+.2f})"
                 )
             
             if len(today_events) > 5:
@@ -358,6 +377,29 @@ class TG:
     def _get_open_positions(self) -> str:
         """Obtém posições abertas atuais."""
         try:
+            # Tentar via bot_states (fonte de verdade)
+            if hasattr(self, 'bot_states') and self.bot_states:
+                positions_text = []
+                with self._lock:
+                    for city_name, state in self.bot_states.items():
+                        if not hasattr(state, 'clob') or not state.clob:
+                            continue
+                        try:
+                            for pos in state.clob.positions.open_positions():
+                                icon = "💰" if str(state.trading_mode).upper() == "REAL" else "📂"
+                                positions_text.append(
+                                    f"{icon} <b>{city_name.replace('_', ' ').title()}</b>\n"
+                                    f"  🎯 {getattr(pos, 'bracket_label', '?')}\n"
+                                    f"  💵 Entrada: {getattr(pos, 'entry_ask', 0)*100:.1f}¢\n"
+                                    f"  🏦 Size: ${getattr(pos, 'size_usdc', 0):.2f}\n"
+                                )
+                        except Exception:
+                            pass
+
+                if positions_text:
+                    return "📂 <b>Posições Abertas</b>\n\n" + "\n".join(positions_text)
+
+            # Fallback: tentar ficheiros (mantido para compatibilidade)
             from polymarket_clob import PositionStatus
             from pathlib import Path
             
@@ -426,11 +468,15 @@ class TG:
             
             events = read_events()
             
-            # Filtrar vitórias (pnl > 0) e ordenar por data
-            wins = [
-                e for e in events 
-                if e.get('pnl', 0) > 0 and e.get('status') == 'won'
-            ]
+            def _is_won(event):
+                status = event.get('status')
+                if status is None:
+                    return event.get('pnl', 0) > 0  # fallback: positivo = won
+                # Aceitar string ou enum
+                s = status.value if hasattr(status, 'value') else str(status)
+                return s.lower() in ('won', 'win', 'true', '1')
+
+            wins = [e for e in events if _is_won(e)]
             wins.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
             recent_wins = wins[:5]
             
@@ -456,8 +502,8 @@ class TG:
                     date_str = timestamp[:10]
                 
                 lines.append(
-                    f"🥇 {i}. <b>{city}</b> — {date_str}\n"
-                    f"   🎯 {bracket}\n"
+                    f"🥇 {i}. <b>{_esc(city)}</b> — {date_str}\n"
+                    f"   🎯 {_esc(bracket)}\n"
                     f"   💵 Entrada: {entry_ask*100:.1f}¢\n"
                     f"   📈 PnL: <b>+${pnl:.2f}</b>\n"
                 )
@@ -470,20 +516,29 @@ class TG:
     def _get_bot_status(self) -> str:
         """Obtém status do bot em todas as cidades."""
         try:
-            if not hasattr(self, 'bot_states') or not self.bot_states:
-                return "⚙️ <b>Status do Bot</b>\n\n❌ Estados do bot não disponíveis."
+            with self._lock:
+                if not hasattr(self, 'bot_states') or not self.bot_states:
+                    return "⚙️ <b>Status do Bot</b>\n\n❌ Estados do bot não disponíveis."
+                
+                # Fazer cópia sob lock para evitar concorrência
+                states_snapshot = []
+                for city_name, state in self.bot_states.items():
+                    if hasattr(state, 'daily_stats') and state.daily_stats:
+                        stats = state.daily_stats
+                        trades_count = len(getattr(stats, 'trades', []))
+                        daily_pnl = getattr(stats, 'daily_pnl', 0.0)
+                        states_snapshot.append((city_name, True, trades_count, daily_pnl))
+                    else:
+                        states_snapshot.append((city_name, False, 0, 0.0))
             
+            # Formatar fora do lock
             lines = [
                 "⚙️ <b>Status do Bot</b>",
                 ""
             ]
             
-            for city_name, state in self.bot_states.items():
-                if hasattr(state, 'daily_stats'):
-                    stats = state.daily_stats
-                    trades_count = len(getattr(stats, 'trades', []))
-                    daily_pnl = getattr(stats, 'daily_pnl', 0.0)
-                    
+            for city_name, has_stats, trades_count, daily_pnl in states_snapshot:
+                if has_stats:
                     icon = "🟢" if daily_pnl >= 0 else "🔴"
                     lines.append(
                         f"{icon} <b>{city_name}</b>\n"
@@ -541,7 +596,6 @@ class TG:
         )
         
         # Enviar mensagem diretamente com a API do Telegram
-        import json
         reply_markup = {"inline_keyboard": keyboard}
         
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
@@ -549,10 +603,9 @@ class TG:
             "chat_id": self.chat_id,
             "text": menu_text,
             "parse_mode": "HTML",
-            "reply_markup": json.dumps(reply_markup)
+            "reply_markup": reply_markup  # FIX C3: dict, não string JSON
         }
         
-        import requests
         try:
             response = requests.post(url, json=data, timeout=10)
             if response.status_code == 200:
@@ -571,9 +624,11 @@ class TG:
 
     def alert_started(self, mode, bankroll, threshold_arg,
                       threshold_month=None, month=None,
-                      market=None, today=None, hour_min=None):
+                      market=None, today=None, hour_min=None,
+                      city_name=None):
         """Bot arrancou. mode = 'paper' ou 'real'."""
         mode_icon = "🟢" if mode == "real" else "🟡"
+        label = (city_name or "Bot").replace("_", " ").title()
 
         if market:
             mkt = (f"✅ <b>{market['title'][:50]}</b>\n"
@@ -591,7 +646,7 @@ class TG:
         hour_str = f"  ⏰ Não entrar antes das <b>{hour_min}h</b>\n" if hour_min else ""
 
         lines = [
-            f"{mode_icon} <b>Munich Bot iniciado</b> — {today}",
+            f"{mode_icon} <b>{label} iniciado</b> — {today}",
             "",
             f"  Modo: <b>{mode.upper()}</b>",
             f"  Bankroll: <b>${bankroll:.2f}</b>",
@@ -630,7 +685,7 @@ class TG:
         bracket_str = ""
         if bracket:
             ask = bracket.get("ask") or bracket.get("price", 0)
-            bracket_str = (f"\n  🎯 Bracket alvo: <b>{bracket['label']}</b>  "
+            bracket_str = (f"\n  🎯 Bracket alvo: <b>{_esc(bracket['label'])}</b>  "
                            f"(ask <b>{ask*100:.1f}¢</b>)")
 
         market_str = ""
@@ -638,7 +693,7 @@ class TG:
             best = max(market["brackets"],
                        key=lambda b: b.get("ask") or b.get("price") or 0)
             best_ask = best.get("ask") or best.get("price", 0)
-            market_str = (f"\n  🏆 Mercado favorito: <b>{best['label']}</b> "
+            market_str = (f"\n  🏆 Mercado favorito: <b>{_esc(best['label'])}</b> "
                           f"(ask {best_ask*100:.0f}¢)")
 
         lines = [
@@ -674,14 +729,10 @@ class TG:
             try:
                 ask_f = float(ask if ask is not None else 0.0)
                 shares_f = float(shares if shares is not None else 0.0)
-                if 0.0 < ask_f < 1.0 and shares_f > 0:
-                    # Lucro máximo bruto se resolver YES em 1.00.
-                    # Ex: ask 0.10, shares 50 -> profit = (1.0 - 0.10) * 50 = 45.0
-                    profit = max(0.0, (1.0 - ask_f) * shares_f)
-                elif ask_f >= 1.0 and shares_f > 0:
-                    # Se ask_f >= 1.0, provavelmente está em cêntimos (ex: 10.0 para 10¢)
-                    ask_norm = ask_f / 100.0
-                    profit = max(0.0, (1.0 - ask_norm) * shares_f)
+                # Normalizar ask de forma segura (sem assumir que >1.0 é cêntimos)
+                ask_safe = min(max(ask_f, 0.01), 0.99)
+                if shares_f > 0:
+                    profit = max(0.0, (1.0 - ask_safe) * shares_f)
                 else:
                     profit = 0.0
             except Exception:
@@ -690,8 +741,8 @@ class TG:
         lines = [
             f"{icon} <b>Ordem {parcel_s}colocada [{mode}]</b>",
             "",
-            f"  🏙 <b>{city}</b>",
-            f"  🎯 <b>{bracket}</b>  ask <b>{ask*100:.1f}¢</b>",
+            f"  🏙 <b>{_esc(city)}</b>",
+            f"  🎯 <b>{_esc(bracket)}</b>  ask <b>{ask*100:.1f}¢</b>",
             f"  🔬 raw ask <b>{raw_ask*100:.1f}¢</b>" if raw_ask is not None else None,
             f"  🧠 P(pico) <b>{p_ens*100:.1f}%</b>" if p_ens is not None else None,
             f"  📍 RMax <b>{rmax:.1f}°C</b>" if rmax is not None else None,
@@ -704,11 +755,11 @@ class TG:
 
     def alert_order_failed(self, error, bracket=None):
         """Ordem REAL falhou (saldo insuficiente, rede, etc)."""
-        bracket_str = bracket["label"] if bracket else "?"
+        bracket_str = _esc(bracket["label"]) if bracket else "?"
         return self.send(
             f"❌ <b>Ordem REAL falhou</b>\n"
             f"  Bracket: {bracket_str}\n"
-            f"  Erro: <code>{str(error)[:200]}</code>"
+            f"  Erro: <code>{_esc(str(error)[:200])}</code>"
         )
 
     def alert_bet_blocked(self, reason, p_ensemble=0.0):
@@ -1055,20 +1106,21 @@ class TG:
         Retorna (text, keyboard) onde keyboard é lista de listas de dicts
         compatíveis com a API do Telegram (inline_keyboard).
         """
-        if not hasattr(self, 'bot_states') or not self.bot_states:
-            return (
-                "📈 <b>Charts por Cidade</b>\n\n"
-                "❌ Nenhuma cidade activa no momento.",
-                []
-            )
+        with self._lock:
+            if not hasattr(self, 'bot_states') or not self.bot_states:
+                return (
+                    "📈 <b>Charts por Cidade</b>\n\n"
+                    "❌ Nenhuma cidade activa no momento.",
+                    []
+                )
 
-        cities = list(self.bot_states.keys())
-        if not cities:
-            return (
-                "📈 <b>Charts por Cidade</b>\n\n"
-                "❌ Nenhuma cidade activa no momento.",
-                []
-            )
+            cities = list(self.bot_states.keys())
+            if not cities:
+                return (
+                    "📈 <b>Charts por Cidade</b>\n\n"
+                    "❌ Nenhuma cidade activa no momento.",
+                    []
+                )
 
         # Constrói keyboard: 2 cidades por linha
         keyboard = []
@@ -1216,10 +1268,9 @@ class TG:
         vol = float(market.get("volume", 0) or 0)
         n_outcomes = market.get("n_outcomes", 0)
         lines.append("  " + "─" * 42)
-        lines.append(f"  Volume: ${vol:>10,.0f}   |   {n_outcomes} brackets")
+        lines.append(f"  Vol: ${vol:,.0f}  |  {n_outcomes} outcomes")
         if n_hidden > 0:
-            lines.append(f"  <i>... mais {n_hidden} brackets escondidos (limite {max_brackets})</i>")
-
+            lines.append(f"  (+ {n_hidden} brackets ocultos)")
         return lines
 
     def _generate_city_charts_message(self, city_name):

@@ -354,48 +354,47 @@ def _slot_idx(h: int, s: int) -> int:
 
 
 def _bracket_contains_peak(temp_lo: float, temp_hi: float, peak_temp: float) -> bool:
+    """
+    Verifica se peak_temp está coberto pelo bracket.
+    Brackets normais (1 grau): [temp_lo, temp_hi + 1.0) semi-aberto.
+    Brackets de cauda (or higher/lower): sem limite nesse lado.
+
+    FIX: Usar intervalo semi-aberto para evitar overlap no pico exato.
+    Ex: bracket 25°C cobre [25.0, 26.0), bracket 26+ cobre [26.0, ∞).
+    Se pico = 26.0, só o 26+ ganha.
+    """
     if temp_hi >= 99:
         return peak_temp >= temp_lo
     if temp_lo <= -99:
         return peak_temp <= temp_hi
+    # Bracket normal: semi-aberto [lo, hi+1.0)
+    # Evita overlap quando pico cai exatamente no limite superior
     return temp_lo <= peak_temp < (temp_hi + 1.0)
 
 
 def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
+    """
+    PnL realista Polymarket.
+    Investido = size_usdc (fixo, ex: $5.00), não shares * ask.
+    Shares são calculadas pelo floor, mas o capital investido é sempre
+    o size_usdc solicitado — o "resto" fica em cash na conta.
+
+    FIX: Não aplicar fee sobre perdas. Na Polymarket real, só se paga
+    2% fee sobre lucros. Em perdas, perde-se apenas o investido.
+    """
     if not ask or ask <= 0:
         return 0.0
     shares = math.floor(size_usdc / ask)
     if shares <= 0:
         return 0.0
-    actual_invested = shares * ask
+    # Investido real é size_usdc (ex: $5.00), não shares * ask
+    invested = size_usdc
     if won:
-        gross = float(shares) - actual_invested
+        # Recebe $1.00 por share, paga fee sobre o lucro
+        gross = float(shares) - invested
         return gross - abs(gross) * TAKER_FEE_RATE
-    gross = -actual_invested
-    return gross - abs(gross) * TAKER_FEE_RATE
-
-
-def _compute_sharpe_sortino(capital_history: list) -> tuple:
-    """Sharpe/Sortino anualizados a 365 dias (Polymarket opera todos os dias)."""
-    if not capital_history or len(capital_history) < 2:
-        return 0.0, 0.0
-    caps = np.array([c for _, c in capital_history], dtype=float)
-    prev = caps[:-1]
-    curr = caps[1:]
-    valid = prev > 0
-    if not valid.any():
-        return 0.0, 0.0
-    rets = (curr[valid] - prev[valid]) / prev[valid]
-    if len(rets) == 0 or rets.std() < 1e-8:
-        return 0.0, 0.0
-    ann = np.sqrt(365)  # Polymarket: 365 dias/ano, não 252
-    sharpe = float(rets.mean() / rets.std() * ann)
-    downside = rets[rets < 0]
-    if len(downside) > 1 and downside.std() > 1e-8:
-        sortino = float(rets.mean() / downside.std() * ann)
-    else:
-        sortino = 0.0
-    return round(sharpe, 2), round(sortino, 2)
+    # Perda: perde-se apenas o investido, sem fee adicional
+    return -invested
 
 
 def _compute_sharpe_sortino_from_day_records(day_records: list, mode: str) -> tuple:
@@ -608,12 +607,15 @@ def run_backtest(
                     sell_bid = matching[0]["bid"] if matching else 0.02  # liquidez zero
 
                     # PnL realizado: vendemos ao bid depois de comprar shares inteiras
+                    # FIX-07: usar size_usdc como invested (consistente com _pnl_per_dollar)
                     entry_ask = pos["ask"]
                     shares = math.floor(pos["size_usdc"] / entry_ask) if entry_ask > 0 else 0
-                    invested = shares * entry_ask
-                    sell_value = shares * sell_bid
-                    gross_pnl = sell_value - invested
-                    realized_pnl = gross_pnl - abs(gross_pnl) * TAKER_FEE_RATE
+                    invested = pos["size_usdc"]  # ← consistente com _pnl_per_dollar
+                    recovered = shares * sell_bid
+                    # PnL real = recovered - invested (o que não foi investido em shares fica em cash)
+                    realized_pnl = recovered - invested
+                    if realized_pnl > 0:
+                        realized_pnl -= realized_pnl * TAKER_FEE_RATE
 
                     entry_single.mark_sold_by_stop(sell_bid, realized_pnl)
 
@@ -636,7 +638,8 @@ def run_backtest(
                 premature_s = _slot_idx(rec["hour"], rec["slot30"]) < peak_sidx
             else:
                 premature_s = False
-            correct_s = single_won
+            # Se disparou stop-loss, o modelo falhou na proteção/tempo. Não conta como win.
+            correct_s = single_won and not entry_single.sold_by_stop
             missed_s = not entry_single.bought
 
             # Acumular anual

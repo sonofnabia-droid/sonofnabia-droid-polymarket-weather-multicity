@@ -30,6 +30,14 @@ class SingleEntry:
 
     is_single = True
 
+    @staticmethod
+    def _first_non_none(*values):
+        """Retorna o primeiro valor que não é None. Evita bugs do `or` com 0/0.0."""
+        for v in values:
+            if v is not None:
+                return v
+        return None
+
     def __init__(self, city_config: CityConfig, **kwargs):
         self.city = city_config
 
@@ -55,33 +63,28 @@ class SingleEntry:
 
         # Fallback: kwargs → CityConfig → defaults
         self.parcel_size = kwargs.get("parcel_size", 5.0)
-        self.threshold = (
-            kwargs.get("threshold")
-            or threshold
-            or city_config.threshold
-            or 0.65
-        )
-        self.hour_min = (
-            kwargs.get("hour_min")
-            or hour_min
-            or city_config.hour_min
-            or 11
-        )
-        self.stop_loss_delta = (
-            kwargs.get("stop_loss_delta")
-            or stop_loss_delta
-            or 1.0
-        )
-        self.min_buy_ask = (
-            kwargs.get("min_buy_ask")
-            or min_buy_ask
-            or 0.15
-        )
-        self.max_buy_ask = (
-            kwargs.get("max_buy_ask")
-            or max_buy_ask
-            or 0.85
-        )
+        self.threshold = self._first_non_none(
+            kwargs.get("threshold"),
+            threshold,
+            city_config.threshold,
+        ) or 0.65
+        self.hour_min = self._first_non_none(
+            kwargs.get("hour_min"),
+            hour_min,
+            city_config.hour_min,
+        ) or 11
+        self.stop_loss_delta = self._first_non_none(
+            kwargs.get("stop_loss_delta"),
+            stop_loss_delta,
+        ) or 1.0
+        self.min_buy_ask = self._first_non_none(
+            kwargs.get("min_buy_ask"),
+            min_buy_ask,
+        ) or 0.15
+        self.max_buy_ask = self._first_non_none(
+            kwargs.get("max_buy_ask"),
+            max_buy_ask,
+        ) or 0.85
 
         self.bought = False
         self.record: dict | None = None
@@ -111,46 +114,68 @@ class SingleEntry:
 
         # --- FILTRO DE ESTABILIDADE (PLATEAU) ---
         if slots_so_far and len(slots_so_far) >= 2:
-            # Pegar as temperaturas dos últimos 30 minutos (últimos 2 slots)
-            temps = [s["temp_c"] for s in slots_so_far[-2:]]
-            delta_30m = temps[-1] - temps[0]
-            if delta_30m > 0.2:
-                return [{
-                    "parcel_idx": 0,
-                    "size_usdc": 0,
-                    "reason": f"SINGLE: temp ainda a subir ({delta_30m:+.2f}°C em 30m > +0.20°C). À espera de plateau.",
-                    "model_ok": True,
-                    "market_ok": None,
-                }]
+            # Encontrar o slot de ~30 min atrás (não o penúltimo da lista)
+            now_minutes = hour * 60 + (slots_so_far[-1].get("slot30", 0) if slots_so_far else 0)
+            target_minutes = now_minutes - 30
+
+            # Buscar o slot mais próximo de 30 min atrás
+            prev_slot = None
+            for s in reversed(slots_so_far[:-1]):  # excluir o slot actual
+                s_minutes = int(s["hour"]) * 60 + int(s.get("slot30", 0))
+                if s_minutes <= target_minutes:
+                    prev_slot = s
+                    break
+
+            if prev_slot is not None:
+                delta = slots_so_far[-1]["temp_c"] - prev_slot["temp_c"]
+                if delta > 0.2:
+                    return [{
+                        "parcel_idx": 0,
+                        "size_usdc": 0,
+                        "reason": f"SINGLE: temp subiu {delta:+.2f}°C nos últimos 30min (> +0.20°C). À espera de plateau.",
+                        "model_ok": True,
+                        "market_ok": None,
+                    }]
 
         if p_ensemble >= self.threshold:
             bracket = self._select_target_bracket(market, running_max) if market else None
-            if bracket is not None:
-                ask = float(bracket.get("ask", bracket.get("price", 1.0)) or 1.0)
-                if ask < self.min_buy_ask:
-                    return [{
-                        "parcel_idx": 0,
-                        "size_usdc": 0,
-                        "reason": (
-                            f"SINGLE: bracket barato demais ({ask*100:.1f}¢ < "
-                            f"{self.min_buy_ask*100:.0f}¢)"
-                        ),
-                        "model_ok": True,
-                        "market_ok": False,
-                        "bracket": bracket,
-                    }]
-                if ask > self.max_buy_ask:
-                    return [{
-                        "parcel_idx": 0,
-                        "size_usdc": 0,
-                        "reason": (
-                            f"SINGLE: bracket caro demais ({ask*100:.0f}¢ > "
-                            f"{self.max_buy_ask*100:.0f}¢)"
-                        ),
-                        "model_ok": True,
-                        "market_ok": False,
-                        "bracket": bracket,
-                    }]
+            
+            # Bloquear compra se não houver bracket válido no mercado
+            if bracket is None:
+                return [{
+                    "parcel_idx": 0,
+                    "size_usdc": 0,
+                    "reason": "SINGLE: p acima do threshold mas sem bracket válido no mercado",
+                    "model_ok": True,
+                    "market_ok": False,
+                    "bracket": None,
+                }]
+                
+            ask = float(bracket.get("ask", bracket.get("price", 1.0)) or 1.0)
+            if ask < self.min_buy_ask:
+                return [{
+                    "parcel_idx": 0,
+                    "size_usdc": 0,
+                    "reason": (
+                        f"SINGLE: bracket barato demais ({ask*100:.1f}¢ < "
+                        f"{self.min_buy_ask*100:.0f}¢)"
+                    ),
+                    "model_ok": True,
+                    "market_ok": False,
+                    "bracket": bracket,
+                }]
+            if ask > self.max_buy_ask:
+                return [{
+                    "parcel_idx": 0,
+                    "size_usdc": 0,
+                    "reason": (
+                        f"SINGLE: bracket caro demais ({ask*100:.0f}¢ > "
+                        f"{self.max_buy_ask*100:.0f}¢)"
+                    ),
+                    "model_ok": True,
+                    "market_ok": False,
+                    "bracket": bracket,
+                }]
             return [{
                 "parcel_idx": 0,
                 "size_usdc": self.parcel_size,
@@ -177,6 +202,8 @@ class SingleEntry:
             return None
 
         target_temp = int(math.floor(running_max))
+
+        # 1. Match exacto
         best = None
         for bracket in brackets:
             lo = bracket.get("temp_lo")
@@ -186,19 +213,38 @@ class SingleEntry:
             if lo <= target_temp <= hi:
                 best = bracket
                 break
-        if best is None and brackets:
-            # Fallback: bracket mais próximo do running_max
-            # Proteger contra brackets com temp_lo/temp_hi malformados
-            valid_brackets = [
-                b for b in brackets
-                if b.get("temp_lo") is not None and b.get("temp_hi") is not None
-            ]
-            if valid_brackets:
-                best = min(
-                    valid_brackets,
-                    key=lambda b: abs(((float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2) - target_temp),
-                )
-        return best
+
+        if best is not None:
+            return best
+
+        # 2. Fallback: bracket de cauda "or higher" / "or lower"
+        for bracket in brackets:
+            lo = bracket.get("temp_lo")
+            hi = bracket.get("temp_hi")
+            if lo is None or hi is None:
+                continue
+            if hi >= 99 and target_temp >= lo:
+                return bracket
+            if lo <= -99 and target_temp <= hi:
+                return bracket
+
+        # 3. Fallback: bracket mais próximo (usar temp_lo para caudas, midpoint para normais)
+        def _distance(b):
+            lo = float(b.get("temp_lo", 0))
+            hi = float(b.get("temp_hi", 0))
+            if hi >= 99:
+                return abs(lo - target_temp)  # distância ao limite inferior
+            if lo <= -99:
+                return abs(hi - target_temp)
+            return abs((lo + hi) / 2 - target_temp)
+
+        valid_brackets = [
+            b for b in brackets
+            if b.get("temp_lo") is not None and b.get("temp_hi") is not None
+        ]
+        if valid_brackets:
+            return min(valid_brackets, key=_distance)
+        return None
 
     def check_stop_loss(self, current_temp: float) -> dict | None:
         if not self.bought or self.sold_by_stop or self.record is None:
