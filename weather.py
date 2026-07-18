@@ -28,6 +28,36 @@ from zoneinfo import ZoneInfo
 from cities.config import CityConfig
 from cities.config import CITIES
 
+# ══════════════════════════════════════════════════════
+#  HELPERS DE CONVERSÃO
+# ══════════════════════════════════════════════════════
+
+def _maybe_convert_mph_to_kmh(value: float | None, threshold: float = 150.0) -> float | None:
+    """
+    Converte mph → km/h se o valor parece estar em mph.
+
+    A WU API aceita units="m" (metric), mas algumas estações PWS
+    ignoram o parâmetro e devolvem imperial. Um valor > threshold
+    em km/h é meteorologicamente raro (só em furacões); se > 150,
+    assume-se mph e converte-se (1 mph = 1.60934 km/h).
+
+    Args:
+        value: valor bruto da API
+        threshold: limiar acima do qual assume mph (default 150 km/h)
+    Returns:
+        Valor em km/h, ou None se input é None
+    """
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v > threshold:
+        return round(v * 1.60934, 1)
+    return v
+
+
 # URLs base
 # ENDPOINTS VÁLIDOS (confirmados 2026-06):
 #   /v3/wx/observations/current — observação actual (free key)
@@ -301,8 +331,13 @@ def _v2_pws_history_parse(observations: list, city_tz: ZoneInfo) -> list[dict]:
             "dewpoint_c":     _f(metric, "dewptAvg", temp_c - 10),
             "pressure_hpa":   _f(metric, "pressureMax", _f(metric, "pressureMin", 1013.0)),
             "wind_dir_deg":   _f(obs, "winddirAvg", 0.0),
-            "wind_speed_kmh": _f(metric, "windspeedAvg", 0.0),  # 0 = sem vento (válido!)
-            "wind_gust_kmh":  _f(metric, "windgustAvg", _f(metric, "windgustHigh", 0.0)),
+            # FIX Bug 5.2: validar/converter wind speed que pode vir em mph
+            "wind_speed_kmh": _maybe_convert_mph_to_kmh(
+                _f(metric, "windspeedAvg", 0.0)
+            ) or 0.0,  # 0 = sem vento (válido!)
+            "wind_gust_kmh":  _maybe_convert_mph_to_kmh(
+                _f(metric, "windgustAvg", _f(metric, "windgustHigh", 0.0))
+            ) or 0.0,
             "uv_index":       _f(obs, "uvHigh", 0.0),  # 0 = noite ou nublado (válido!)
         })
     return rows
@@ -615,13 +650,23 @@ def fetch_om_hourly_today(city: CityConfig, session: requests.Session) -> list[d
         return []
 
 
-def fetch_om_latest(city: CityConfig, session: requests.Session) -> dict | None:
-    """Previsão horária do Open-Meteo para a hora atual da cidade."""
+def fetch_om_forecast_current_hour(city: CityConfig, session: requests.Session) -> dict | None:
+    """
+    Previsão horária do Open-Meteo para a hora actual da cidade.
+
+    NOTA: isto retorna a PREVISÃO (forecast) para a hora mais próxima,
+    não uma observação real. Para dados observados, usar bootstrap_om_today
+    ou o endpoint archive do Open-Meteo.
+    """
     rows = fetch_om_hourly_today(city, session)
     if not rows:
         return None
     h_now = datetime.now(tz=_get_city_timezone(city)).hour
     return min(rows, key=lambda r: abs(r["hour"] - h_now))
+
+
+# Alias para compatibilidade com código existente
+fetch_om_latest = fetch_om_forecast_current_hour
 
 
 # ══════════════════════════════════════════════════════

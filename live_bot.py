@@ -855,6 +855,10 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     set_city(city.name)
     now = bot_now()
     city_today = city_date(city)
+    # FIX Bug 4.11: calcular current_market_slug UMA VEZ no início do tick
+    # e reutilizar durante todo o processamento. Isto evita inconsistências
+    # se a meia-noite passar durante o processamento do tick.
+    current_market_slug = state.fetcher.date_to_slug(city_today)
 
     # ── Variáveis para tick_logger (inicializadas c/ defaults) ──
     _actions_logged: list = []
@@ -863,6 +867,19 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     if state._last_date is None:
         state._last_date = city_today
     if city_today != state._last_date:
+        # FIX Bug 4.13: settlement do dia anterior ANTES de resetar o estado.
+        # Anteriormente o settlement só acontecia se city_h_now > day_end,
+        # o que falhava quando o dia mudava para um novo dia (00:00).
+        if trading_mode_str == "paper" and state.clob:
+            try:
+                prev_day = state._last_date
+                settled_pnl = _settle_paper_positions_for_day(state, prev_day)
+                if settled_pnl and hasattr(state, 'daily_stats') and state.daily_stats:
+                    state.daily_stats.daily_pnl += settled_pnl
+                    _save_daily_stats(state.daily_stats, city.name)
+            except Exception as e:
+                print(f"  {C['yellow']}{city.name}: PAPER settlement no reset falhou: {e}{R}")
+
         # Guardar stats do dia anterior antes de perder
         if hasattr(state, 'daily_stats') and state.daily_stats:
             _save_daily_stats(state.daily_stats, city.name)
@@ -1072,68 +1089,69 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             print(f"  {C['yellow']}{city.name}: Fetch market failed: {e}{R}")
 
     # ── Anti-duplicado: verificar DUAS fontes ──
-    if state.entry and state.clob:
-        _skip = False
-        _rec = None
-        current_market_slug = state.fetcher.date_to_slug(city_today)
+    # FIX Bug 4.1: todo o bloco anti-duplicado dentro do lock para
+    # evitar race condition com a thread do Telegram.
+    with state._lock:
+        if state.entry and state.clob:
+            _skip = False
+            _rec = None
 
-        # Fonte 1: arquivo bets_{date}.json
-        bets_path = LOG_DIR / f"bets_{city.name}_{city_today}.json"
-        if bets_path.exists():
-            try:
-                existing_bets = json.loads(bets_path.read_text())
-                existing_bets = [
-                    b for b in existing_bets
-                    if b.get("market_slug") is not None
-                    and b.get("market_slug") == current_market_slug
-                ]
-                if existing_bets:
-                    _skip = True
-                    first = existing_bets[-1]
-                    _rec = {
-                        "ask": first.get("ask"),
-                        "temp_hi": first.get("temp_hi"),
-                        "temp_lo": first.get("temp_lo"),
-                        "token_id": first.get("token_id"),
-                        "size_usdc": first.get("bet_size"),
-                        "market_slug": first.get("market_slug", current_market_slug),
-                        "strategy": first.get("strategy"),
-                        "bracket": first.get("bracket") or first.get("bracket_label"),
-                        "bracket_label": first.get("bracket_label") or first.get("bracket"),
-                        "order_id": first.get("order_id"),
-                        "shares": first.get("shares"),
-                        "p_ensemble": first.get("p_ensemble"),
-                    }
-            except Exception:
-                pass
+            # Fonte 1: arquivo bets_{date}.json
+            bets_path = LOG_DIR / f"bets_{city.name}_{city_today}.json"
+            if bets_path.exists():
+                try:
+                    existing_bets = json.loads(bets_path.read_text())
+                    existing_bets = [
+                        b for b in existing_bets
+                        if b.get("market_slug") is not None
+                        and b.get("market_slug") == current_market_slug
+                    ]
+                    if existing_bets:
+                        _skip = True
+                        first = existing_bets[-1]
+                        _rec = {
+                            "ask": first.get("ask"),
+                            "temp_hi": first.get("temp_hi"),
+                            "temp_lo": first.get("temp_lo"),
+                            "token_id": first.get("token_id"),
+                            "size_usdc": first.get("bet_size"),
+                            "market_slug": first.get("market_slug", current_market_slug),
+                            "strategy": first.get("strategy"),
+                            "bracket": first.get("bracket") or first.get("bracket_label"),
+                            "bracket_label": first.get("bracket_label") or first.get("bracket"),
+                            "order_id": first.get("order_id"),
+                            "shares": first.get("shares"),
+                            "p_ensemble": first.get("p_ensemble"),
+                        }
+                except Exception:
+                    pass
 
-        # Fonte 2: CLOB positions
-        if not _skip:
-            try:
-                _existing = [p for p in state.clob.positions.open_positions()
-                             if str(p.date_opened) == str(city_today)
-                             and getattr(p, "market_slug", "") == current_market_slug]
-                if _existing:
-                    _skip = True
-                    _pos = _existing[-1]
-                    _rec = {
-                        "ask": getattr(_pos, 'entry_ask', None),
-                        "temp_hi": getattr(_pos, 'temp_hi', None),
-                        "temp_lo": getattr(_pos, 'temp_lo', None),
-                        "token_id": getattr(_pos, 'token_id', None),
-                        "size_usdc": getattr(_pos, 'size_usdc', None),
-                        "order_id": getattr(_pos, 'order_id', None),
-                        "market_slug": getattr(_pos, 'market_slug', current_market_slug),
-                        "strategy": "single",
-                        "bracket": getattr(_pos, 'bracket_label', None),
-                        "bracket_label": getattr(_pos, 'bracket_label', None),
-                        "shares": getattr(_pos, 'shares', None),
-                    }
-            except Exception:
-                pass
+            # Fonte 2: CLOB positions
+            if not _skip:
+                try:
+                    _existing = [p for p in state.clob.positions.open_positions()
+                                 if str(p.date_opened) == str(city_today)
+                                 and getattr(p, "market_slug", "") == current_market_slug]
+                    if _existing:
+                        _skip = True
+                        _pos = _existing[-1]
+                        _rec = {
+                            "ask": getattr(_pos, 'entry_ask', None),
+                            "temp_hi": getattr(_pos, 'temp_hi', None),
+                            "temp_lo": getattr(_pos, 'temp_lo', None),
+                            "token_id": getattr(_pos, 'token_id', None),
+                            "size_usdc": getattr(_pos, 'size_usdc', None),
+                            "order_id": getattr(_pos, 'order_id', None),
+                            "market_slug": getattr(_pos, 'market_slug', current_market_slug),
+                            "strategy": "single",
+                            "bracket": getattr(_pos, 'bracket_label', None),
+                            "bracket_label": getattr(_pos, 'bracket_label', None),
+                            "shares": getattr(_pos, 'shares', None),
+                        }
+                except Exception:
+                    pass
 
-        if _skip and _rec and state.entry:
-            with state._lock:
+            if _skip and _rec and state.entry:
                 if hasattr(state.entry, "restore"):
                     state.entry.restore(_rec, state.strategy_mode)
                 else:
@@ -1141,25 +1159,24 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     state.entry.record = _rec
                     if hasattr(state.entry, 'strategy_used'):
                         state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
-            print(f"  {C['yellow']}{city.name}: Posição existente detectada "
-                  f"— a saltar entrada{R}")
+                print(f"  {C['yellow']}{city.name}: Posição existente detectada "
+                      f"— a saltar entrada{R}")
 
-            # Verificar se stop-loss já foi disparado antes do restart
-            if state.slots_so_far and state.entry.record:
-                current_temp = max(s["temp_c"] for s in state.slots_so_far)
-                sl_check = state.entry.check_stop_loss(current_temp)
-                if sl_check:
-                    # Marcar como vendida sem enviar alerta duplicado
-                    with state._lock:
+                # Verificar se stop-loss já foi disparado antes do restart
+                if state.slots_so_far and state.entry.record:
+                    current_temp = max(s["temp_c"] for s in state.slots_so_far)
+                    sl_check = state.entry.check_stop_loss(current_temp)
+                    if sl_check:
+                        # Marcar como vendida sem enviar alerta duplicado
                         state.entry.sold_by_stop = True
                         state.entry.record["sold_by_stop"] = True
                         if hasattr(state.entry, '_stop_loss_blocked_alerted'):
                             state.entry._stop_loss_blocked_alerted = True
-                    print(f"  {C['yellow']}{city.name}: stop-loss já disparado antes do restart — marcando como vendida{R}")
-                else:
-                    # Só resetar o flag se NÃO foi triggerado antes do restart
-                    if hasattr(state.entry, '_stop_loss_blocked_alerted'):
-                        state.entry._stop_loss_blocked_alerted = False
+                        print(f"  {C['yellow']}{city.name}: stop-loss já disparado antes do restart — marcando como vendida{R}")
+                    else:
+                        # Só resetar o flag se NÃO foi triggerado antes do restart
+                        if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+                            state.entry._stop_loss_blocked_alerted = False
 
     # Predição e entrada
     h_now = city_now(city).hour
@@ -1282,7 +1299,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     except Exception:
                         pass
 
-                min_buy_ask = getattr(state.entry, "min_buy_ask", 0.20)
+                # FIX Bug 4.10: usar min_buy_ask do SingleEntry (default 0.15),
+                # não 0.20 hardcoded. Alinha backtest com live.
+                min_buy_ask = getattr(state.entry, "min_buy_ask", 0.15)
                 effective_ask = raw_best_ask if raw_best_ask is not None else float(ask)
                 if effective_ask < min_buy_ask:
                     print(
@@ -1295,22 +1314,10 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     )
                     break
 
-                # ── NOVO: filtro max_buy_ask ──
-                # Bloqueia buys acima de X¢ (default 85¢) — brackets quase certos têm
-                # payout mínimo (1.00 - 0.85 = 0.15 por share) e risco/retorno mau.
-                # Este filtro já existia em calibrate_all.py mas não era aplicado no live.
-                max_buy_ask = float(getattr(state, "max_buy_ask", 0.85))
-                if effective_ask > max_buy_ask:
-                    print(
-                        f"  {C['yellow']}{city.name.upper()} BUY BLOQUEADO: "
-                        f"ask {effective_ask*100:.1f}¢ > máximo {max_buy_ask*100:.0f}¢{R}"
-                    )
-                    _tg_alert(
-                        f"🚫 <b>{city.name.title()}</b> buy bloqueado: "
-                        f"ask {effective_ask*100:.1f}¢ > máximo {max_buy_ask*100:.0f}¢ "
-                        f"(bracket quase certo, payout mau)"
-                    )
-                    break
+                # FIX Bug 4.9: REMOVER filtro max_buy_ask duplicado aqui.
+                # O SingleEntry.evaluate() já faz esta verificação com o ask
+                # do bracket. Refazê-la aqui com raw_best_ask (que pode diferir)
+                # cria inconsistências entre backtest e live.
 
                 # bet_record completo (campos necessários para stop-loss + tracking)
                 bet_record = {
@@ -1430,127 +1437,142 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
                 break  # Apenas uma ação por tick
 
-    # ─── STOP-LOSS CHECK ────────────────────────────
-    # Snapshot atómico do estado sob lock para evitar race condition
+        # ─── STOP-LOSS CHECK ────────────────────────────
+    # FIX Bugs 4.3 + 4.4 + 4.5: bloco atómico completo sob lock;
+    # resetar _stop_loss_blocked_alerted quando condições mudam;
+    # usar get_orderbook fresh para obter bid actual.
     with state._lock:
-        _market_snapshot = state.market.copy() if state.market else None
-        _entry_snapshot = state.entry
-        _clob_snapshot = state.clob
-        _latest_obs_snapshot = state.latest_obs
+        if state.entry and state.clob and state.latest_obs and state.market:
+            current_temp = state.latest_obs["temp_c"]
+            if hasattr(state.entry, 'check_stop_loss'):
+                stop_signal = state.entry.check_stop_loss(current_temp)
+                if stop_signal:
+                    pos = stop_signal["position"]
+                    # Throttle: só alertar 1× por trigger (evita spam)
+                    _already_alerted = getattr(state.entry, '_stop_loss_blocked_alerted', False)
 
-    if _entry_snapshot and _clob_snapshot and _latest_obs_snapshot:
-        current_temp = _latest_obs_snapshot["temp_c"]
-        if hasattr(_entry_snapshot, 'check_stop_loss'):
-            stop_signal = _entry_snapshot.check_stop_loss(current_temp)
-            if stop_signal and _market_snapshot:
-                pos = stop_signal["position"]
-                # Throttle: só alertar 1× por trigger (evita spam)
-                _already_alerted = getattr(_entry_snapshot, '_stop_loss_blocked_alerted', False)
+                    matching = []
+                    pos_token = pos.get("token_id")
+                    if pos_token:
+                        matching = [
+                            b for b in state.market.get("brackets", [])
+                            if b.get("token_id") == pos_token
+                        ]
+                    if not matching:
+                        pos_lo = float(pos.get("temp_lo") or 0)
+                        pos_hi = float(pos.get("temp_hi") or 0)
+                        matching = [
+                            b for b in state.market.get("brackets", [])
+                            if abs(float(b.get("temp_lo", 0)) - pos_lo) < 0.1
+                            and abs(float(b.get("temp_hi", 0)) - pos_hi) < 0.1
+                        ]
 
-                matching = []
-                pos_token = pos.get("token_id")
-                if pos_token:
-                    matching = [
-                        b for b in _market_snapshot.get("brackets", [])
-                        if b.get("token_id") == pos_token
-                    ]
-                if not matching:
-                    pos_lo = float(pos.get("temp_lo") or 0)
-                    pos_hi = float(pos.get("temp_hi") or 0)
-                    matching = [
-                        b for b in _market_snapshot.get("brackets", [])
-                        if abs(float(b.get("temp_lo", 0)) - pos_lo) < 0.1
-                        and abs(float(b.get("temp_hi", 0)) - pos_hi) < 0.1
-                    ]
-
-                # ── Caso 1: bracket desapareceu do mercado ──
-                if not matching:
-                    if not _already_alerted:
-                        print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
-                        print(f"  {C['red']}   BLOQUEADO: bracket {pos.get('label','?')} "
-                              f"sem match no mercado actual{R}")
-                        _tg_alert_stop_loss_blocked(
-                            city.name, pos, current_temp,
-                            reason="bracket sem match no mercado",
-                        )
-                        _entry_snapshot._stop_loss_blocked_alerted = True
-                else:
-                    bracket = matching[0]
-                    bid_price = bracket.get("bid")
-
-                    # ── Caso 2: bid muito baixo ou ausente ──
-                    if not bid_price or bid_price < 0.02:
+                    # ── Caso 1: bracket desapareceu do mercado ──
+                    if not matching:
                         if not _already_alerted:
-                            bid_str = f"{bid_price*100:.2f}¢" if bid_price else "—"
-                            print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
-                            print(f"  {C['yellow']}   BLOQUEADO: bid={bid_str} "
-                                  f"(< 2¢, não vale vender) — deixar expirar{R}")
+                            print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                            print(f"  {C['red']}   BLOQUEADO: bracket {pos.get('label','?')} "
+                                  f"sem match no mercado actual{R}")
                             _tg_alert_stop_loss_blocked(
                                 city.name, pos, current_temp,
-                                reason=f"bid muito baixo ({bid_str})",
+                                reason="bracket sem match no mercado",
                             )
-                            _entry_snapshot._stop_loss_blocked_alerted = True
+                            state.entry._stop_loss_blocked_alerted = True
+                        # FIX 4.4: NÃO manter bloqueado para sempre. Se o bracket
+                        # reaparecer no próximo tick, matching será True e o
+                        # flag é resetado no else abaixo.
                     else:
-                        # ── Caso 3: bid OK, tentar vender ──
-                        current_market_slug = state.fetcher.date_to_slug(city_today)
-                        poll = [p for p in _clob_snapshot.positions.open_positions()
-                                if p.token_id == pos.get("token_id")
-                                and getattr(p, "market_slug", "") == current_market_slug]
+                        bracket = matching[0]
+                        bid_price = bracket.get("bid")
 
-                        # ── Caso 3a: posição não encontrada no CLOB ──
-                        if not poll:
+                        # FIX 4.4: resetar flag quando bracket existe
+                        # (condições melhoraram desde o último bloqueio)
+                        if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+                            state.entry._stop_loss_blocked_alerted = False
+
+                        # ── Caso 2: bid muito baixo ou ausente ──
+                        if not bid_price or bid_price < 0.02:
                             if not _already_alerted:
-                                tid = pos.get("token_id") or ""
-                                tid_short = tid[:16] + "..." if tid else "?"
-                                print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
-                                print(f"  {C['red']}   BLOQUEADO: posição "
-                                      f"token_id={tid_short} "
-                                      f"não encontrada no CLOB{R}")
+                                bid_str = f"{bid_price*100:.2f}¢" if bid_price else "—"
+                                print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                                print(f"  {C['yellow']}   BLOQUEADO: bid={bid_str} "
+                                      f"(< 2¢, não vale vender) — deixar expirar{R}")
                                 _tg_alert_stop_loss_blocked(
                                     city.name, pos, current_temp,
-                                    reason="posição não encontrada no CLOB",
+                                    reason=f"bid muito baixo ({bid_str})",
                                 )
-                                _entry_snapshot._stop_loss_blocked_alerted = True
+                                state.entry._stop_loss_blocked_alerted = True
                         else:
-                            # ── Caso 3b: tentar vender ──
-                            sell_result = _clob_snapshot.sell_yes(poll[0], bid_price)
-                            if sell_result.success:
-                                # Usar função partilhada para consistência com backtester
-                                pnl_result = _compute_realized_pnl(
-                                    pos.get("ask", 0), bid_price, 
-                                    pos.get("size_usdc", 0), TAKER_FEE_RATE
-                                )
-                                realized_pnl = pnl_result["realized_pnl"]
+                            # ── Caso 3: bid OK, tentar vender ──
+                            # FIX 4.5: obter bid fresh do orderbook antes de vender
+                            fresh_bid = bid_price
+                            pos_token_id = pos.get("token_id")
+                            if pos_token_id and state.clob:
+                                try:
+                                    fresh_book = state.clob.get_orderbook(pos_token_id)
+                                    if fresh_book and getattr(fresh_book, "best_bid", None) is not None:
+                                        fresh_bid = round_to_tick(float(fresh_book.best_bid), direction="down")
+                                except Exception:
+                                    pass  # usa o bid do snapshot
 
-                                _entry_snapshot.mark_sold_by_stop(bid_price, realized_pnl)
-                                settled_id = str(pos.get("order_id") or pos.get("timestamp") or pos.get("bracket_label") or "")
-                                if settled_id:
-                                    state._settled_position_ids.add(settled_id)
-                                stats.stop_losses_triggered += 1
+                            poll = [p for p in state.clob.positions.open_positions()
+                                    if p.token_id == pos_token_id
+                                    and getattr(p, "market_slug", "") == current_market_slug]
 
-                                stats.daily_pnl += realized_pnl
-
-                                print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
-                                print(f"  {C['yellow']}   Vendido @ {bid_price:.4f}, "
-                                      f"PnL={realized_pnl:+.2f} "
-                                      f"(shares={pnl_result['shares']}, "
-                                      f"fee=${pnl_result['fee']:.2f}){R}")
-
-                                _tg_alert_stop_loss_triggered(
-                                    city.name, pos, current_temp,
-                                    bid_price=bid_price, realized_pnl=realized_pnl,
-                                )
-                            else:
-                                # ── Caso 3c: ordem de venda falhou ──
+                            # ── Caso 3a: posição não encontrada no CLOB ──
+                            if not poll:
                                 if not _already_alerted:
-                                    err = getattr(sell_result, 'error', None) or 'erro desconhecido'
+                                    tid = pos.get("token_id") or ""
+                                    tid_short = tid[:16] + "..." if tid else "?"
                                     print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
-                                    print(f"  {C['red']}   FALHA na venda @ {bid_price:.4f}: {err}{R}")
+                                    print(f"  {C['red']}   BLOQUEADO: posição "
+                                          f"token_id={tid_short} "
+                                          f"não encontrada no CLOB{R}")
                                     _tg_alert_stop_loss_blocked(
                                         city.name, pos, current_temp,
-                                        reason=f"sell_yes falhou: {err}",
+                                        reason="posição não encontrada no CLOB",
                                     )
-                                    _entry_snapshot._stop_loss_blocked_alerted = True
+                                    state.entry._stop_loss_blocked_alerted = True
+                            else:
+                                # ── Caso 3b: tentar vender ──
+                                sell_result = state.clob.sell_yes(poll[0], fresh_bid)
+                                if sell_result.success:
+                                    # Usar função partilhada para consistência com backtester
+                                    pnl_result = _compute_realized_pnl(
+                                        pos.get("ask", 0), fresh_bid, 
+                                        pos.get("size_usdc", 0), TAKER_FEE_RATE
+                                    )
+                                    realized_pnl = pnl_result["realized_pnl"]
+
+                                    state.entry.mark_sold_by_stop(fresh_bid, realized_pnl)
+                                    settled_id = str(pos.get("order_id") or pos.get("timestamp") or pos.get("bracket_label") or "")
+                                    if settled_id:
+                                        state._settled_position_ids.add(settled_id)
+                                    stats.stop_losses_triggered += 1
+
+                                    stats.daily_pnl += realized_pnl
+
+                                    print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                                    print(f"  {C['yellow']}   Vendido @ {fresh_bid:.4f}, "
+                                          f"PnL={realized_pnl:+.2f} "
+                                          f"(shares={pnl_result['shares']}, "
+                                          f"fee=${pnl_result['fee']:.2f}){R}")
+
+                                    _tg_alert_stop_loss_triggered(
+                                        city.name, pos, current_temp,
+                                        bid_price=fresh_bid, realized_pnl=realized_pnl,
+                                    )
+                                else:
+                                    # ── Caso 3c: ordem de venda falhou ──
+                                    if not _already_alerted:
+                                        err = getattr(sell_result, 'error', None) or 'erro desconhecido'
+                                        print(f"\n  {C['red']}⚠  [{city.name}] {stop_signal['reason']}{R}")
+                                        print(f"  {C['red']}   FALHA na venda @ {fresh_bid:.4f}: {err}{R}")
+                                        _tg_alert_stop_loss_blocked(
+                                            city.name, pos, current_temp,
+                                            reason=f"sell_yes falhou: {err}",
+                                        )
+                                        state.entry._stop_loss_blocked_alerted = True
     # ───────────────────────────────────────────────────────
 
     # Display simples (apenas quando dashboard multi-cidade não está ativa)
@@ -2153,7 +2175,15 @@ def main():
                                     # Fazer tick again para executar buy com threshold baixado
                                     try:
                                         city_bankroll_race = city_bankrolls.get(cn, PARCEL_SIZE * 100)
-                                        _tick_city(s, args.run, city_bankroll_race)
+                                        race_stats = _tick_city(s, args.run, city_bankroll_race)
+                                        # FIX Bug 4.16: atualizar session_stats após race buy
+                                        if race_stats and race_stats.trades:
+                                            daily_stats[cn] = race_stats
+                                            if is_multi:
+                                                session_stats["total_trades"] = max(
+                                                    session_stats["total_trades"],
+                                                    sum(len(getattr(st.daily_stats, "trades", [])) for st in states.values())
+                                                )
                                     except Exception as e:
                                         print(f"  {C['red']}{cn}: RACE tick failed: {e}{R}")
                                     finally:

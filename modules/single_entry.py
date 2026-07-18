@@ -85,6 +85,11 @@ class SingleEntry:
             kwargs.get("max_buy_ask"),
             max_buy_ask,
         ) or 0.85
+        # FIX Bug 1.1: timeout para filtro de plateau em subida constante
+        self.plateau_timeout_hours = self._first_non_none(
+            kwargs.get("plateau_timeout_hours"),
+            plateau_timeout_hours,
+        ) or 4.0
 
         self.bought = False
         self.record: dict | None = None
@@ -129,13 +134,27 @@ class SingleEntry:
             if prev_slot is not None:
                 delta = slots_so_far[-1]["temp_c"] - prev_slot["temp_c"]
                 if delta > 0.2:
-                    return [{
-                        "parcel_idx": 0,
-                        "size_usdc": 0,
-                        "reason": f"SINGLE: temp subiu {delta:+.2f}°C nos últimos 30min (> +0.20°C). À espera de plateau.",
-                        "model_ok": True,
-                        "market_ok": None,
-                    }]
+                    # FIX Bug 1.1: timeout de plateau — se já passou tempo
+                    # suficiente desde o primeiro slot do dia, deixa de bloquear
+                    # para evitar nenhuma compra em dias de subida constante.
+                    first_slot_minutes = (
+                        int(slots_so_far[0]["hour"]) * 60
+                        + int(slots_so_far[0].get("slot30", 0))
+                    )
+                    elapsed_hours = (now_minutes - first_slot_minutes) / 60.0
+                    if elapsed_hours < self.plateau_timeout_hours:
+                        return [{
+                            "parcel_idx": 0,
+                            "size_usdc": 0,
+                            "reason": (
+                                f"SINGLE: temp subiu {delta:+.2f}°C nos últimos 30min "
+                                f"(> +0.20°C). À espera de plateau "
+                                f"({elapsed_hours:.1f}h < {self.plateau_timeout_hours}h timeout)."
+                            ),
+                            "model_ok": True,
+                            "market_ok": None,
+                        }]
+                    # else: plateau timeout expirado — continua para avaliar compra
 
         if p_ensemble >= self.threshold:
             bracket = self._select_target_bracket(market, running_max) if market else None
@@ -274,9 +293,11 @@ class SingleEntry:
         self.strategy_used = record.get("strategy") if isinstance(record, dict) else None
 
     def restore(self, record: dict, strategy_used: str | None = None) -> None:
+        # FIX Bug 1.5: resetar sold_by_stop explicitamente para evitar
+        # estado inconsistente quando o record não tem a chave sold_by_stop.
         self.bought = True
         self.record = record
-        self.sold_by_stop = bool(record.get("sold_by_stop", False)) if isinstance(record, dict) else False
+        self.sold_by_stop = False
         self.strategy_used = strategy_used or (record.get("strategy") if isinstance(record, dict) else None)
 
     def mark_sold_by_stop(self, sell_price: float, pnl: float) -> None:
@@ -323,6 +344,7 @@ if __name__ == "__main__":
     print(f"    Threshold: {single.threshold}")
     print(f"    Hour min: {single.hour_min}h")
     print(f"    Stop-loss delta: {single.stop_loss_delta}°C")
+    print(f"    Plateau timeout: {single.plateau_timeout_hours}h")
 
     # Teste: abaixo do threshold
     actions = single.evaluate(0.5, 15, None, 25.0, None)
