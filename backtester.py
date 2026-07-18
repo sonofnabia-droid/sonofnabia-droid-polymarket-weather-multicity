@@ -219,6 +219,61 @@ class SimulatedMarket:
 
 
 # ══════════════════════════════════════════════════════
+#  SHARED PnL COMPUTATION (usada por backtester e live_bot)
+# ══════════════════════════════════════════════════════
+
+def _compute_realized_pnl(entry_ask: float, sell_bid: float, size_usdc: float,
+                          taker_fee_rate: float = TAKER_FEE_RATE) -> dict:
+    """
+    Calcula o PnL realizado de uma venda (stop-loss ou settlement).
+
+    Retorna dict com:
+      - shares: número de shares inteiros comprados
+      - actual_invested: capital realmente investido (shares * entry_ask)
+      - recovered: capital recuperado na venda (shares * sell_bid)
+      - realized_pnl: PnL líquido (recovered - actual_invested - fee)
+      - fee: fee de taker aplicada (só em lucros)
+
+    Esta função é partilhada entre backtester.py e live_bot.py para garantir
+    consistência absoluta no cálculo de PnL.
+    """
+    if entry_ask <= 0 or sell_bid <= 0:
+        return {
+            "shares": 0,
+            "actual_invested": 0.0,
+            "recovered": 0.0,
+            "realized_pnl": 0.0,
+            "fee": 0.0,
+        }
+
+    shares = math.floor(size_usdc / entry_ask)
+    if shares <= 0:
+        return {
+            "shares": 0,
+            "actual_invested": 0.0,
+            "recovered": 0.0,
+            "realized_pnl": 0.0,
+            "fee": 0.0,
+        }
+
+    actual_invested = shares * entry_ask
+    recovered = shares * sell_bid
+    gross_pnl = recovered - actual_invested
+
+    # Fee de taker: 2% sobre lucros apenas (Polymarket não cobra em perdas)
+    fee = abs(gross_pnl) * taker_fee_rate if gross_pnl > 0 else 0.0
+    realized_pnl = gross_pnl - fee
+
+    return {
+        "shares": shares,
+        "actual_invested": actual_invested,
+        "recovered": recovered,
+        "realized_pnl": realized_pnl,
+        "fee": fee,
+    }
+
+
+# ══════════════════════════════════════════════════════
 #  STATS DATACLASS
 # ══════════════════════════════════════════════════════
 @dataclass
@@ -336,8 +391,9 @@ def _compute_prev7_map(df: pd.DataFrame, city: CityConfig) -> dict:
     from collections import deque
     window = deque()
     for d in dates_list:
-        # FIX: >= 7 para janela estritamente de 7 dias (antes era > 7 = 8 dias)
-        while window and (d - window[0]).days >= 7:
+        # FIX: > 7 para janela de 7 dias (7 dias anteriores = 8 elementos total,
+        # mas como removemos o dia atual antes de calcular, ficamos com 7)
+        while window and (d - window[0]).days > 7:
             window.popleft()
         if not window:
             prev7[d] = climatology.get(d.month, 15.0)
@@ -369,6 +425,8 @@ def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
     O custo REAL é shares * ask (ex: 10 * $0.47 = $4.70).
     O "resto" fica em cash e NÃO é investido.
     Fee de 2% só sobre lucros — em perdas, perde-se apenas o investido.
+
+    Usa _compute_realized_pnl para consistência com live_bot.py.
     """
     if not ask or ask <= 0:
         return 0.0
@@ -377,8 +435,9 @@ def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
         return 0.0
     actual_invested = shares * ask
     if won:
-        gross_profit = float(shares) - actual_invested
-        return gross_profit - abs(gross_profit) * TAKER_FEE_RATE
+        # Usar função partilhada para consistência (sell_bid = 1.0 em win)
+        result = _compute_realized_pnl(ask, 1.0, size_usdc, TAKER_FEE_RATE)
+        return result["realized_pnl"]
     # Perda: perde-se apenas o investido, sem fee adicional
     return -actual_invested
 
@@ -609,16 +668,11 @@ def run_backtest(
                                 and b["temp_hi"] == pos["temp_hi"]]
                     sell_bid = matching[0]["bid"] if matching else 0.02  # liquidez zero
 
-                    # PnL realizado: vendemos ao bid depois de comprar shares inteiras
-                    # FIX-02: usar actual_invested = shares * entry_ask e só
-                    # aplicar fee sobre lucros (consistente com _pnl_per_dollar).
-                    entry_ask = pos["ask"]
-                    shares = math.floor(pos["size_usdc"] / entry_ask) if entry_ask > 0 else 0
-                    actual_invested = shares * entry_ask if entry_ask > 0 else 0.0
-                    recovered = shares * sell_bid
-                    realized_pnl = recovered - actual_invested
-                    if realized_pnl > 0:
-                        realized_pnl -= realized_pnl * TAKER_FEE_RATE
+                    # PnL realizado: usar função partilhada para consistência com live_bot
+                    pnl_result = _compute_realized_pnl(
+                        pos["ask"], sell_bid, pos["size_usdc"], TAKER_FEE_RATE
+                    )
+                    realized_pnl = pnl_result["realized_pnl"]
 
                     entry_single.mark_sold_by_stop(sell_bid, realized_pnl)
 

@@ -21,6 +21,7 @@ from typing import Optional
 import threading
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, predict_ensemble, compute_prev7, init_history_max
+from backtester import _compute_realized_pnl, TAKER_FEE_RATE
 from weather import (
     make_wu_session, make_om_session, fetch_wu_latest,
     fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
@@ -59,6 +60,34 @@ LOG_DIR = Path("live_bot_logs")
 LOG_DIR.mkdir(exist_ok=True)
 
 PARCEL_SIZE = 5.0
+
+
+def _load_paper_state(city_name: str) -> dict:
+    """Carrega estado PAPER persistido (inclui _last_applied_pnl)."""
+    path = LOG_DIR / f"paper_state_{city_name}.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_paper_state(city_name: str, state_dict: dict) -> None:
+    """Persiste estado PAPER de forma atómica."""
+    path = LOG_DIR / f"paper_state_{city_name}.json"
+    tmp_path = LOG_DIR / f".tmp_paper_state_{city_name}_{int(time.time()*1000)}.json"
+    try:
+        tmp_path.write_text(json.dumps(state_dict, indent=2, default=str))
+        tmp_path.replace(path)
+    except Exception as e:
+        print(f"  {C['yellow']}{city_name}: falha a guardar paper_state: {e}{R}")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
 
 # ════════════════════════════════════════════════════
 #  POLYMARKET FETCHER
@@ -1148,7 +1177,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         last_slot = state.slots_so_far[-1] if state.slots_so_far else {}
 
         # Extrair valor: 1º tenta a obs live, 2º tenta o último slot, 3º default seguro
-        _temp       = obs.get("temp_c") if obs.get("temp_c") is not None else last_slot.get("temp_c", 0)
+        # Fallback: climatologia do mês em vez de 0 (mais realista quando dados falham)
+        clim_fallback = city.climatology.get(city_today.month, 15.0) if city.climatology else 15.0
+        _temp       = obs.get("temp_c") if obs.get("temp_c") is not None else last_slot.get("temp_c", clim_fallback)
         _humidity   = obs.get("humidity") if obs.get("humidity") is not None else last_slot.get("humidity", 70)
         _dewpoint   = obs.get("dewpoint_c") if obs.get("dewpoint_c") is not None else last_slot.get("dewpoint_c", _temp - 10)
         _pressure   = obs.get("pressure_hpa") if obs.get("pressure_hpa") is not None else last_slot.get("pressure_hpa", 1013)
@@ -1196,12 +1227,31 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             state.market, running_max
         )
 
+        # Usar forecasts WU+OM reais para agreement (logging/telemetria, não bloqueia compra)
+        wu = state.last_wu_forecast_max
+        om = state.last_om_forecast_max
+        if wu is not None and om is not None:
+            diff = abs(wu - om)
+            fc_agreement = {
+                "valid": diff <= 2,
+                "diff": diff,
+                "consensus_max": (wu + om) // 2,
+                "reason": "" if diff <= 2 else f"WU={wu}°C vs OM={om}°C",
+            }
+        else:
+            fc_agreement = {
+                "valid": True,  # se um falta, não bloqueamos
+                "diff": None,
+                "consensus_max": wu or om,
+                "reason": "forecast missing",
+            }
+
         actions = state.entry.evaluate(
             p_ensemble=p_ensemble,
             hour=h_cur,
             market=state.market,
             running_max=running_max,
-            forecast_agreement=None,
+            forecast_agreement=fc_agreement,
             slots_so_far=state.slots_so_far,
         )
         _actions_logged = actions  # capturar para tick_logger
@@ -1381,27 +1431,34 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 break  # Apenas uma ação por tick
 
     # ─── STOP-LOSS CHECK ────────────────────────────
-    if state.entry and state.clob and state.latest_obs:
-        current_temp = state.latest_obs["temp_c"]
-        if hasattr(state.entry, 'check_stop_loss'):
-            stop_signal = state.entry.check_stop_loss(current_temp)
-            if stop_signal and state.market:
+    # Snapshot atómico do estado sob lock para evitar race condition
+    with state._lock:
+        _market_snapshot = state.market.copy() if state.market else None
+        _entry_snapshot = state.entry
+        _clob_snapshot = state.clob
+        _latest_obs_snapshot = state.latest_obs
+
+    if _entry_snapshot and _clob_snapshot and _latest_obs_snapshot:
+        current_temp = _latest_obs_snapshot["temp_c"]
+        if hasattr(_entry_snapshot, 'check_stop_loss'):
+            stop_signal = _entry_snapshot.check_stop_loss(current_temp)
+            if stop_signal and _market_snapshot:
                 pos = stop_signal["position"]
                 # Throttle: só alertar 1× por trigger (evita spam)
-                _already_alerted = getattr(state.entry, '_stop_loss_blocked_alerted', False)
+                _already_alerted = getattr(_entry_snapshot, '_stop_loss_blocked_alerted', False)
 
                 matching = []
                 pos_token = pos.get("token_id")
                 if pos_token:
                     matching = [
-                        b for b in state.market.get("brackets", [])
+                        b for b in _market_snapshot.get("brackets", [])
                         if b.get("token_id") == pos_token
                     ]
                 if not matching:
                     pos_lo = float(pos.get("temp_lo") or 0)
                     pos_hi = float(pos.get("temp_hi") or 0)
                     matching = [
-                        b for b in state.market.get("brackets", [])
+                        b for b in _market_snapshot.get("brackets", [])
                         if abs(float(b.get("temp_lo", 0)) - pos_lo) < 0.1
                         and abs(float(b.get("temp_hi", 0)) - pos_hi) < 0.1
                     ]
@@ -1416,7 +1473,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                             city.name, pos, current_temp,
                             reason="bracket sem match no mercado",
                         )
-                        state.entry._stop_loss_blocked_alerted = True
+                        _entry_snapshot._stop_loss_blocked_alerted = True
                 else:
                     bracket = matching[0]
                     bid_price = bracket.get("bid")
@@ -1432,11 +1489,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                 city.name, pos, current_temp,
                                 reason=f"bid muito baixo ({bid_str})",
                             )
-                            state.entry._stop_loss_blocked_alerted = True
+                            _entry_snapshot._stop_loss_blocked_alerted = True
                     else:
                         # ── Caso 3: bid OK, tentar vender ──
                         current_market_slug = state.fetcher.date_to_slug(city_today)
-                        poll = [p for p in state.clob.positions.open_positions()
+                        poll = [p for p in _clob_snapshot.positions.open_positions()
                                 if p.token_id == pos.get("token_id")
                                 and getattr(p, "market_slug", "") == current_market_slug]
 
@@ -1453,19 +1510,19 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                     city.name, pos, current_temp,
                                     reason="posição não encontrada no CLOB",
                                 )
-                                state.entry._stop_loss_blocked_alerted = True
+                                _entry_snapshot._stop_loss_blocked_alerted = True
                         else:
                             # ── Caso 3b: tentar vender ──
-                            sell_result = state.clob.sell_yes(poll[0], bid_price)
+                            sell_result = _clob_snapshot.sell_yes(poll[0], bid_price)
                             if sell_result.success:
-                                entry_ask = pos.get("ask") or 0
-                                size_usdc = pos.get("size_usdc") or 0
-                                # math.floor para ser consistente com a compra
-                                # (shares = floor(size_usdc/ask)) — senão PnL inflado
-                                shares = math.floor(size_usdc / entry_ask) if entry_ask > 0 else 0
-                                realized_pnl = shares * bid_price - size_usdc
+                                # Usar função partilhada para consistência com backtester
+                                pnl_result = _compute_realized_pnl(
+                                    pos.get("ask", 0), bid_price, 
+                                    pos.get("size_usdc", 0), TAKER_FEE_RATE
+                                )
+                                realized_pnl = pnl_result["realized_pnl"]
 
-                                state.entry.mark_sold_by_stop(bid_price, realized_pnl)
+                                _entry_snapshot.mark_sold_by_stop(bid_price, realized_pnl)
                                 settled_id = str(pos.get("order_id") or pos.get("timestamp") or pos.get("bracket_label") or "")
                                 if settled_id:
                                     state._settled_position_ids.add(settled_id)
@@ -1475,7 +1532,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
                                 print(f"\n  {C['yellow']}⚠  [{city.name}] {stop_signal['reason']}{R}")
                                 print(f"  {C['yellow']}   Vendido @ {bid_price:.4f}, "
-                                      f"PnL={realized_pnl:+.2f}{R}")
+                                      f"PnL={realized_pnl:+.2f} "
+                                      f"(shares={pnl_result['shares']}, "
+                                      f"fee=${pnl_result['fee']:.2f}){R}")
 
                                 _tg_alert_stop_loss_triggered(
                                     city.name, pos, current_temp,
@@ -1491,7 +1550,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                                         city.name, pos, current_temp,
                                         reason=f"sell_yes falhou: {err}",
                                     )
-                                    state.entry._stop_loss_blocked_alerted = True
+                                    _entry_snapshot._stop_loss_blocked_alerted = True
     # ───────────────────────────────────────────────────────
 
     # Display simples (apenas quando dashboard multi-cidade não está ativa)
@@ -1650,6 +1709,9 @@ def main():
             f"hour_min={getattr(entry, 'hour_min', 'n/a')})"
         )
 
+        # Carregar estado PAPER persistido (se existir)
+        paper_state = _load_paper_state(city.name)
+
         state = CityState(
             city=city,
             strategy_mode=args.mode,
@@ -1661,6 +1723,9 @@ def main():
             dashboard_enabled=dashboard_enabled,
             threshold_override=args.threshold_override,  # ← FIX 1
         )
+
+        # Restaurar _last_applied_pnl do disco (para bankroll PAPER consistente após restart)
+        state._last_applied_pnl = paper_state.get("_last_applied_pnl", 0.0)
         state.wu_only = bool(args.wu_only)
 
         # ── NOVO: configurar filtros no state ──
@@ -1948,6 +2013,9 @@ def main():
                         delta = stats.daily_pnl - last_applied
                         city_bankrolls[city_name] = max(100.0, prev_bankroll + delta)
                         state._last_applied_pnl = stats.daily_pnl
+
+                        # Persistir estado PAPER para consistência após restart
+                        _save_paper_state(city.name, {"_last_applied_pnl": state._last_applied_pnl})
 
                     if is_multi:
                         current_stats = daily_stats.get(city_name)
