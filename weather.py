@@ -385,10 +385,10 @@ def fetch_wu_day(city: CityConfig, day: date,
         print(f"  [WU] {city.name}: 200 OK com {len(observations)} observations mas parser não extraiu nenhuma")
         return []
 
-    # Sanity check de temperatura
+    # Sanity check de temperatura (margem justa para detetar Fahrenheit vs Celsius)
     if city.climatology:
         clim_max = max(city.climatology.values())
-        sanity_limit = clim_max + 50.0
+        sanity_limit = clim_max + 15.0 
         if any(row.get("temp_c", 0.0) > sanity_limit for row in rows):
             print(
                 f"  [WU] {city.name}: invalid temperature scale "
@@ -641,6 +641,18 @@ def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
     if h == 24:
         return (23, 30)
     return (h, 0)
+
+
+def floor_slot(hour: int, minute: int) -> tuple[int, int]:
+    """
+    Converte (hour, minute) para o último slot 30min COMPLETO.
+    Semântica: truncar para BAIXO (slot já terminado).
+      minute=0-29  → slot 0 da mesma hora
+      minute=30-59 → slot 30 da mesma hora
+    """
+    if minute < 30:
+        return (hour, 0)
+    return (hour, 30)
 
 
 def bootstrap_today(city: CityConfig, api_key: str,

@@ -767,14 +767,15 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
                 # Se o ask for 0 ou 0.01, usar o preço atual do mercado
                 if cd.market:
                     for bracket in cd.market.get("brackets", []):
-                        if bracket.get("bracket_label") == cd.position.get("bracket"):
+                        # FIX: brackets usam chave 'label', não 'bracket_label'
+                        if bracket.get("label") == cd.position.get("bracket"):
                             ask = bracket.get("ask") or bracket.get("price")
                             break
             
             bkt = str(cd.position.get("bracket", "?"))[:18]
             
             # Adicionar hora da abertura se disponível
-            entry_time = getattr(cd.position, "entry_time", None)
+            entry_time = cd.position.get("entry_time") if cd.position else None
             if entry_time:
                 if isinstance(entry_time, str):
                     if "T" in entry_time:
@@ -787,25 +788,36 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
             else:
                 d_op = date.today().isoformat()
             
-            # Calcular PnL para posições paper
-            current_price = ask  # Para paper trading, usar o preço de entrada
+            # Calcular PnL para posições paper (buscar preço ATUAL do mercado)
+            entry_ask = ask
+            current_ask = entry_ask  # Fallback para o preço de entrada
             size_usdc = cd.position.get("size_usdc", 5.0)
-            if current_price > 0:
-                pnl_u = size_usdc * (current_price - 1.0)  # PnL baseado no preço atual
-                pnl_p = (current_price - 1.0) * 100  # PnL em %
+            
+            # Tentar obter o preço de mercado atual para este bracket
+            if cd.market and cd.position:
+                pos_label = cd.position.get("bracket", "")
+                for b in cd.market.get("brackets", []):
+                    if b.get("label") == pos_label:
+                        current_ask = b.get("ask") or b.get("price") or entry_ask
+                        break
+            
+            shares = math.floor(size_usdc / entry_ask) if entry_ask > 0 else 0
+            if shares > 0 and current_ask > 0:
+                pnl_u = shares * (current_ask - entry_ask)
+                pnl_p = ((current_ask / entry_ask) - 1.0) * 100 if entry_ask > 0 else 0.0
             else:
                 pnl_u = None
                 pnl_p = None
             
             tbl_open.add_row(
                 clbl, d_op, bkt,
-                f"{ask*100:.1f}¢" if ask > 0 else "—",
-                f"{current_price*100:.1f}¢" if current_price > 0 else "—",
+                f"{entry_ask*100:.1f}¢" if entry_ask > 0 else "—",
+                f"{current_ask*100:.1f}¢" if current_ask > 0 else "—",
                 Text(f"{pnl_u:+.2f}$" if pnl_u is not None else "—", 
                      style="bold green" if pnl_u and pnl_u > 0 else "bold red" if pnl_u and pnl_u < 0 else "dim"),
                 Text(f"{pnl_p:+.1f}%" if pnl_p is not None else "—", 
                      style="bold green" if pnl_p and pnl_p > 0 else "bold red" if pnl_p and pnl_p < 0 else "dim"),
-                f"{size_usdc:.2f}",
+                f"{shares:.2f}",
                 Text("📄 PAPER", style="yellow"),
             )
             n_open += 1
@@ -1006,7 +1018,9 @@ def render_dashboard(
             status = getattr(getattr(pos, "status", None), "value", getattr(pos, "status", None))
             if str(status).lower() != "open":
                 continue
-            d_open = str(getattr(pos, "date_opened", "") or "")
+            d_open_raw = getattr(pos, "date_opened", None)
+            # Garantir que ambos são strings no formato ISO para comparação segura
+            d_open = d_open_raw.isoformat() if hasattr(d_open_raw, 'isoformat') else str(d_open_raw or "")
             if d_open and d_open != city_today:
                 open_out_of_day += 1
 

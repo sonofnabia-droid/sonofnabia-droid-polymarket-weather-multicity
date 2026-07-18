@@ -355,6 +355,13 @@ def print_aggregate_dashboard(
         for r in ok for rec in r.day_records
         if rec.get("single_ask") and not rec["single_missed"]
     ]
+    
+    # Inicializar defaults para evitar NameError se all_asks estiver vazio
+    avg_ask = 0.0
+    be_wr = 100.0
+    margin = 0.0
+    ev = 0.0
+
     if all_asks:
         avg_ask = float(np.mean(all_asks))
         # Proteger contra ask muito baixo (ruído pode ir < 0.01)
@@ -438,19 +445,16 @@ def print_aggregate_dashboard(
 
     # ─── Veredicto ───
     _console.rule("[bold]VEREDICTO[/bold]")
-    # Garantir que be_wr existe mesmo sem trades (evita NameError edge case)
-    be_wr = be_wr if all_asks else 100.0  # 100% = nunca ganha = break-even trivial
-    margin_val = g_win_pct - be_wr if all_asks else 0
-    if g_pnl_pct > 5 and margin_val > 5:
+    if g_pnl_pct > 5 and margin > 5:
         _console.print(
             f"[green bold]✓ EDGE POSITIVA ROBUSTA[/green bold] — "
-            f"Margem +{margin_val:.1f}pp, PnL ${G['pnl']:+,.0f} "
+            f"Margem +{margin:.1f}pp, PnL ${G['pnl']:+,.0f} "
             f"em {G['trades']:,} trades."
         )
-    elif g_pnl_pct > 0 and margin_val > 0:
+    elif g_pnl_pct > 0 and margin > 0:
         _console.print(
             f"[yellow bold]⚠ EDGE MARGINAL[/yellow bold] — "
-            f"Margem +{margin_val:.1f}pp. Slippage em produção pode eliminá-la."
+            f"Margem +{margin:.1f}pp. Slippage em produção pode eliminá-la."
         )
     else:
         _console.print(
@@ -495,7 +499,7 @@ def print_aggregate_dashboard(
             "avg_sharpe": round(g_sharpe, 2) if g_sharpe else None,
             "avg_ask": round(avg_ask, 4) if all_asks else None,
             "be_win_rate": round(be_wr, 1) if all_asks else None,
-            "margin_pp": round(margin_val, 1) if all_asks else None,
+            "margin_pp": round(margin, 1) if all_asks else None,
             "ev_per_dollar": round(ev, 4) if all_asks else None,
         },
         "seasonal": season_agg,

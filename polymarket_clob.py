@@ -467,7 +467,8 @@ class ClobClient:
                 )
 
         buy_price = round_to_tick(price, TICK_SIZE, "up")
-        shares = math.floor(size_usdc / buy_price) if order_type.upper() == "FOK" else round(size_usdc / buy_price, 4)
+        # Always use floor for shares - CLOB requires whole shares
+        shares = math.floor(size_usdc / buy_price)
 
         # ── PAPER MODE ────────────────────────────────
         if self.mode == TradingMode.PAPER:

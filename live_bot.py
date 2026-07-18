@@ -24,7 +24,7 @@ from predictor import set_city, load_models, predict_ensemble, compute_prev7, in
 from weather import (
     make_wu_session, make_om_session, fetch_wu_latest,
     fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
-    bootstrap_today, bootstrap_om_today, ceil_slot, is_plausible_temp,
+    bootstrap_today, bootstrap_om_today, ceil_slot, floor_slot, is_plausible_temp,
 )
 from modules.strategy_factory import create_strategy
 from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus, round_to_tick
@@ -331,6 +331,8 @@ class CityState:
     threshold_override: Optional[float] = None
     # ── FIX 4: throttle para _save_daily_stats ──
     _last_stats_save: float = 0.0
+    _last_saved_trades: int = 0
+    _last_saved_stops: int = 0
     # ── FIX 5: backoff para bootstrap ──
     _last_bootstrap_attempt: float = 0.0
     # ── FIX 7: throttle para persistir history_max ──
@@ -402,7 +404,7 @@ def _bootstrap_state_today(state: CityState) -> None:
     """
     city = state.city
     now_city = city_now(city)
-    limit_h, limit_s = ceil_slot(now_city.hour, now_city.minute)
+    limit_h, limit_s = floor_slot(now_city.hour, now_city.minute)
     limit_idx = limit_h * 60 + limit_s
 
     try:
@@ -850,6 +852,12 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             state.entry._stop_loss_blocked_alerted = False
         state._last_date = city_today
         state.daily_stats = DailyStats(date=city_today)  # ← Reset no novo dia
+        # Resetar o delta PnL aplicado ao bankroll PAPER — senão o tick
+        # seguinte subtrai o PnL do dia anterior (daily_pnl=0 vs last_applied>0).
+        state._last_applied_pnl = 0.0
+        # Resetar contadores do throttle para o novo dia.
+        state._last_saved_trades = 0
+        state._last_saved_stops = 0
         _bootstrap_state_today(state)
 
     # Em vez de: stats = DailyStats(date=city_today)
@@ -1093,12 +1101,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 state.entry.record = _rec
                 if hasattr(state.entry, 'strategy_used'):
                     state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
-            if hasattr(state.entry, "_stop_loss_blocked_alerted"):
-                state.entry._stop_loss_blocked_alerted = False
             print(f"  {C['yellow']}{city.name}: Posição existente detectada "
                   f"— a saltar entrada{R}")
 
             # Verificar se stop-loss já foi disparado antes do restart
+            _sl_already_triggered = False
             if state.slots_so_far and state.entry.record:
                 current_temp = max(s["temp_c"] for s in state.slots_so_far)
                 sl_check = state.entry.check_stop_loss(current_temp)
@@ -1109,8 +1116,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                     if hasattr(state.entry, '_stop_loss_blocked_alerted'):
                         state.entry._stop_loss_blocked_alerted = True
                     print(f"  {C['yellow']}{city.name}: stop-loss já disparado antes do restart — marcando como vendida{R}")
+                    _sl_already_triggered = True
 
-            if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+            # Só limpar o flag se NÃO foi detectado stop-loss prévio — senão
+            # anulamos a guarda contra alertas duplicados acima.
+            if not _sl_already_triggered and hasattr(state.entry, '_stop_loss_blocked_alerted'):
                 state.entry._stop_loss_blocked_alerted = False
 
     # Predição e entrada
@@ -1441,7 +1451,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                             if sell_result.success:
                                 entry_ask = pos.get("ask") or 0
                                 size_usdc = pos.get("size_usdc") or 0
-                                shares = size_usdc / entry_ask if entry_ask > 0 else 0
+                                # math.floor para ser consistente com a compra
+                                # (shares = floor(size_usdc/ask)) — senão PnL inflado
+                                shares = math.floor(size_usdc / entry_ask) if entry_ask > 0 else 0
                                 realized_pnl = shares * bid_price - size_usdc
 
                                 state.entry.mark_sold_by_stop(bid_price, realized_pnl)
@@ -1502,12 +1514,19 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             print(f"  [tick_logger] log_tick failed: {e}")
 
     # FIX 4: throttle _save_daily_stats (I/O excessivo — 30s * 2880 ticks/dia)
+    # Basear em MUDANÇA (trades/stops novos desde último save), não no
+    # estado total — senão após o 1º trade grava em todos os ticks.
     now_ts_save = time.time()
+    n_trades = len(stats.trades)
+    n_stops = stats.stop_losses_triggered
+    _has_new = (n_trades != state._last_saved_trades
+                or n_stops != state._last_saved_stops)
     if (now_ts_save - state._last_stats_save >= 300  # 5 min
-            or stats.trades  # ou houve trade
-            or stats.stop_losses_triggered):  # ou stop-loss
+            or _has_new):
         _save_daily_stats(stats, city.name)
         state._last_stats_save = now_ts_save
+        state._last_saved_trades = n_trades
+        state._last_saved_stops = n_stops
     return stats
 
 
@@ -1807,37 +1826,43 @@ def main():
                                             temp_max_hour = int(peak_slot["hour"])
 
                                     # Bracket resolvido: o que contém temp_max_actual
+                                    # Usar intervalo semiaberto [lo, hi+1.0) como o backtester
+                                    # (_bracket_contains_peak) para evitar overlap no pico exato.
                                     bracket_resolved = None
                                     win = None
                                     if state.market and temp_max_actual is not None:
                                         for b in state.market.get("brackets", []):
                                             lo = float(b.get("temp_lo", -99))
                                             hi = float(b.get("temp_hi", 99))
-                                            if lo <= temp_max_actual <= hi:
-                                                bracket_resolved = b.get("label")
-                                                # Win se comprou este bracket
-                                                if state.entry and getattr(state.entry, "bought", False):
-                                                    import math as _m
-                                                    rec = getattr(state.entry, "record", None) or {}
-                                                    buy_label = rec.get("bracket_label") or rec.get("bracket")
-                                                    if buy_label is not None:
-                                                        win = (buy_label == bracket_resolved)
+                                            if hi >= 99:
+                                                _contains = temp_max_actual >= lo
+                                            elif lo <= -99:
+                                                _contains = temp_max_actual <= hi
+                                            else:
+                                                _contains = lo <= temp_max_actual < (hi + 1.0)
+                                            if not _contains:
+                                                continue
+                                            bracket_resolved = b.get("label")
+                                            # Win se comprou este bracket — preferir
+                                            # limites numéricos (robusto a normalização).
+                                            if state.entry and getattr(state.entry, "bought", False):
+                                                import math as _m
+                                                rec = getattr(state.entry, "record", None) or {}
+                                                try:
+                                                    plo = float(rec.get("temp_lo", b.get("temp_lo", -99)))
+                                                    phi = float(rec.get("temp_hi", b.get("temp_hi", 99)))
+                                                    peak_int = int(_m.floor(temp_max_actual))
+                                                    if phi >= 99:
+                                                        win = peak_int >= int(_m.floor(plo))
+                                                    elif plo <= -99:
+                                                        win = peak_int <= int(_m.floor(phi))
                                                     else:
-                                                        # Fallback robusto: usa temp_lo/temp_hi numéricos
-                                                        # do record (igual ao resolve_paper_position)
-                                                        try:
-                                                            plo = float(rec.get("temp_lo", b.get("temp_lo", -99)))
-                                                            phi = float(rec.get("temp_hi", b.get("temp_hi", 99)))
-                                                            peak_int = int(_m.floor(temp_max_actual))
-                                                            if phi >= 99:
-                                                                win = peak_int >= int(_m.floor(plo))
-                                                            elif plo <= -99:
-                                                                win = peak_int <= int(_m.floor(phi))
-                                                            else:
-                                                                win = int(_m.floor(plo)) <= peak_int <= int(_m.floor(phi))
-                                                        except (TypeError, ValueError):
-                                                            win = None
-                                                break
+                                                        win = int(_m.floor(plo)) <= peak_int <= int(_m.floor(phi))
+                                                except (TypeError, ValueError):
+                                                    # Fallback final: comparar labels
+                                                    buy_label = rec.get("bracket_label") or rec.get("bracket")
+                                                    win = (buy_label == bracket_resolved) if buy_label is not None else None
+                                            break
 
                                     # Stats do dia
                                     n_buys = len(getattr(stats, "trades", []))
