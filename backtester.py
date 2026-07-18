@@ -336,7 +336,8 @@ def _compute_prev7_map(df: pd.DataFrame, city: CityConfig) -> dict:
     from collections import deque
     window = deque()
     for d in dates_list:
-        while window and (d - window[0]).days > 7:
+        # FIX: >= 7 para janela estritamente de 7 dias (antes era > 7 = 8 dias)
+        while window and (d - window[0]).days >= 7:
             window.popleft()
         if not window:
             prev7[d] = climatology.get(d.month, 15.0)
@@ -354,47 +355,55 @@ def _slot_idx(h: int, s: int) -> int:
 
 
 def _bracket_contains_peak(temp_lo: float, temp_hi: float, peak_temp: float) -> bool:
-    """
-    Verifica se peak_temp está coberto pelo bracket.
-    Brackets normais (1 grau): [temp_lo, temp_hi + 1.0) semi-aberto.
-    Brackets de cauda (or higher/lower): sem limite nesse lado.
-
-    FIX: Usar intervalo semi-aberto para evitar overlap no pico exato.
-    Ex: bracket 25°C cobre [25.0, 26.0), bracket 26+ cobre [26.0, ∞).
-    Se pico = 26.0, só o 26+ ganha.
-    """
     if temp_hi >= 99:
         return peak_temp >= temp_lo
     if temp_lo <= -99:
         return peak_temp <= temp_hi
-    # Bracket normal: semi-aberto [lo, hi+1.0)
-    # Evita overlap quando pico cai exatamente no limite superior
     return temp_lo <= peak_temp < (temp_hi + 1.0)
 
 
 def _pnl_per_dollar(ask: float, won: bool, size_usdc: float = 5.0) -> float:
     """
     PnL realista Polymarket.
-    Investido = size_usdc (fixo, ex: $5.00), não shares * ask.
-    Shares são calculadas pelo floor, mas o capital investido é sempre
-    o size_usdc solicitado — o "resto" fica em cash na conta.
-
-    FIX: Não aplicar fee sobre perdas. Na Polymarket real, só se paga
-    2% fee sobre lucros. Em perdas, perde-se apenas o investido.
+    O utilizador pede size_usdc (ex: $5.00), mas só compra shares inteiros.
+    O custo REAL é shares * ask (ex: 10 * $0.47 = $4.70).
+    O "resto" fica em cash e NÃO é investido.
+    Fee de 2% só sobre lucros — em perdas, perde-se apenas o investido.
     """
     if not ask or ask <= 0:
         return 0.0
     shares = math.floor(size_usdc / ask)
     if shares <= 0:
         return 0.0
-    # Investido real é size_usdc (ex: $5.00), não shares * ask
-    invested = size_usdc
+    actual_invested = shares * ask
     if won:
-        # Recebe $1.00 por share, paga fee sobre o lucro
-        gross = float(shares) - invested
-        return gross - abs(gross) * TAKER_FEE_RATE
+        gross_profit = float(shares) - actual_invested
+        return gross_profit - abs(gross_profit) * TAKER_FEE_RATE
     # Perda: perde-se apenas o investido, sem fee adicional
-    return -invested
+    return -actual_invested
+
+
+def _compute_sharpe_sortino(capital_history: list) -> tuple:
+    """Sharpe/Sortino anualizados a 365 dias (Polymarket opera todos os dias)."""
+    if not capital_history or len(capital_history) < 2:
+        return 0.0, 0.0
+    caps = np.array([c for _, c in capital_history], dtype=float)
+    prev = caps[:-1]
+    curr = caps[1:]
+    valid = prev > 0
+    if not valid.any():
+        return 0.0, 0.0
+    rets = (curr[valid] - prev[valid]) / prev[valid]
+    if len(rets) == 0 or rets.std() < 1e-8:
+        return 0.0, 0.0
+    ann = np.sqrt(365)  # Polymarket: 365 dias/ano, não 252
+    sharpe = float(rets.mean() / rets.std() * ann)
+    downside = rets[rets < 0]
+    if len(downside) > 1 and downside.std() > 1e-8:
+        sortino = float(rets.mean() / downside.std() * ann)
+    else:
+        sortino = 0.0
+    return round(sharpe, 2), round(sortino, 2)
 
 
 def _compute_sharpe_sortino_from_day_records(day_records: list, mode: str) -> tuple:
@@ -450,6 +459,7 @@ def run_backtest(
     """
     sim_mkt = SimulatedMarket(temp_range=city.temp_range, noise_std=noise_std)
     prev7_map = _compute_prev7_map(df, city)
+    hour_min = city.hour_min if city.hour_min is not None else 6
 
     yearly = {}
     capital = 1000.0
@@ -502,17 +512,13 @@ def run_backtest(
 
             fc_agreement = {"valid": True}  # assumimos forecasts concordam
 
-            # Precomputar predições em batch para o dia para acelerar o backtest
-            day_slots_prep = []
-            features_list = []
-            valid_indices = []
-            hour_min = city.hour_min if city.hour_min is not None else 6
-            for idx, (_, row) in enumerate(day_df.iterrows()):
-                h = int(row["hour"])
-                s = int(row["slot30"])
-                t = float(row["temp_c"])
-                slot_entry = {
-                    "hour": h, "slot30": s, "temp_c": t,
+            # Construir todos os slots do dia uma vez (evita iterar day_df 2x)
+            all_day_slots = []
+            for _, row in day_df.iterrows():
+                all_day_slots.append({
+                    "hour": int(row["hour"]),
+                    "slot30": int(row["slot30"]),
+                    "temp_c": float(row["temp_c"]),
                     "humidity": float(row["humidity"]),
                     "cloud_cover": float(row["cloud_cover"]),
                     "dewpoint_c": float(row["dewpoint_c"]),
@@ -521,41 +527,37 @@ def run_backtest(
                     "wind_speed_kmh": float(row["wind_speed_kmh"]),
                     "wind_gust_kmh": float(row["wind_gust_kmh"]),
                     "uv_index": float(row["uv_index"]),
-                }
-                day_slots_prep.append(slot_entry)
-                if h < city.day_start or len(day_slots_prep) < 4 or h < hour_min:
+                })
+
+            # Batch prediction
+            p_ens_list = [0.0] * len(all_day_slots)
+            features_list = []
+            valid_indices = []
+            slots_so_far_batch = []
+            for idx, slot in enumerate(all_day_slots):
+                h = slot["hour"]
+                slots_so_far_batch.append(slot)
+                if h < city.day_start or len(slots_so_far_batch) < 4 or h < hour_min:
                     continue
-                current_extra = {**slot_entry, "prev_7d_avg_max": prev7_map.get(d, 15.0)}
-                feat = build_features(day_slots_prep.copy(), current_extra, month, doy, models.get("prior_map", {}))
+                current_extra = {**slot, "prev_7d_avg_max": prev7_map.get(d, 15.0)}
+                feat = build_features(slots_so_far_batch.copy(), current_extra, month, doy, models.get("prior_map", {}))
                 features_list.append([feat.get(col, 0.0) for col in models["feat_cols"]])
                 valid_indices.append(idx)
 
-            p_ens_list = [0.0] * len(day_df)
             if features_list:
                 X_batch = np.array(features_list, dtype=np.float32)
                 preds = models["model_lgb"].predict_proba(X_batch)[:, 1]
                 for p_idx, val_idx in enumerate(valid_indices):
                     p_ens_list[val_idx] = float(np.clip(preds[p_idx], 0.0, 1.0))
 
-            for idx_in_day, (_, row) in enumerate(day_df.iterrows()):
-                h = int(row["hour"])
-                s = int(row["slot30"])
-                t = float(row["temp_c"])
+            # Execução
+            slots_so_far = []
+            for idx_in_day, slot in enumerate(all_day_slots):
+                h = slot["hour"]
+                s = slot["slot30"]
+                t = slot["temp_c"]
+                slots_so_far.append(slot)
 
-                slot_entry = {
-                    "hour": h, "slot30": s, "temp_c": t,
-                    "humidity": float(row["humidity"]),
-                    "cloud_cover": float(row["cloud_cover"]),
-                    "dewpoint_c": float(row["dewpoint_c"]),
-                    "pressure_hpa": float(row["pressure_hpa"]),
-                    "wind_dir_deg": float(row["wind_dir_deg"]),
-                    "wind_speed_kmh": float(row["wind_speed_kmh"]),
-                    "wind_gust_kmh": float(row["wind_gust_kmh"]),
-                    "uv_index": float(row["uv_index"]),
-                }
-                slots_so_far.append(slot_entry)
-
-                hour_min = city.hour_min if city.hour_min is not None else 6
                 if h < city.day_start or len(slots_so_far) < 4 or h < hour_min:
                     continue
 
@@ -569,7 +571,8 @@ def run_backtest(
                 market_sim = {"brackets": brackets}
 
                 # SINGLE — 1 compra por sessão
-                for act in entry_single.evaluate(p_ens, h, market_sim, running_max, fc_agreement):
+                # FIX: passar slots_so_far para activar o filtro de plateau
+                for act in entry_single.evaluate(p_ens, h, market_sim, running_max, fc_agreement, slots_so_far):
                     if act.get("size_usdc", 0) > 0:
                         # Estratégia real: apostar no bracket que contém floor(running_max)
                         target_temp = int(math.floor(running_max))
@@ -607,13 +610,13 @@ def run_backtest(
                     sell_bid = matching[0]["bid"] if matching else 0.02  # liquidez zero
 
                     # PnL realizado: vendemos ao bid depois de comprar shares inteiras
-                    # FIX-07: usar size_usdc como invested (consistente com _pnl_per_dollar)
+                    # FIX-02: usar actual_invested = shares * entry_ask e só
+                    # aplicar fee sobre lucros (consistente com _pnl_per_dollar).
                     entry_ask = pos["ask"]
                     shares = math.floor(pos["size_usdc"] / entry_ask) if entry_ask > 0 else 0
-                    invested = pos["size_usdc"]  # ← consistente com _pnl_per_dollar
+                    actual_invested = shares * entry_ask if entry_ask > 0 else 0.0
                     recovered = shares * sell_bid
-                    # PnL real = recovered - invested (o que não foi investido em shares fica em cash)
-                    realized_pnl = recovered - invested
+                    realized_pnl = recovered - actual_invested
                     if realized_pnl > 0:
                         realized_pnl -= realized_pnl * TAKER_FEE_RATE
 
@@ -638,8 +641,7 @@ def run_backtest(
                 premature_s = _slot_idx(rec["hour"], rec["slot30"]) < peak_sidx
             else:
                 premature_s = False
-            # Se disparou stop-loss, o modelo falhou na proteção/tempo. Não conta como win.
-            correct_s = single_won and not entry_single.sold_by_stop
+            correct_s = single_won
             missed_s = not entry_single.bought
 
             # Acumular anual
@@ -1145,272 +1147,3 @@ def _run_city_backtest(args, city_name: str):
 
     _console.print("\n[2/4] Dados...")
     df_all = load_data(Path(city.csv_path), city)
-    df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
-
-    if args.end:
-        end_date = date.fromisoformat(args.end)
-    else:
-        end_date = date.today() - timedelta(days=1)
-    if args.start:
-        start_date = date.fromisoformat(args.start)
-    else:
-        start_date = date(end_date.year - args.years + 1, 1, 1)
-
-    df = df_all[(df_all["date"] >= start_date) & (df_all["date"] <= end_date)].copy()
-    _console.print(f"  {len(df):,} slots | {start_date} → {end_date}")
-    if df.empty:
-        _console.print(f"  [yellow]Sem dados para {city.name} nesta janela. A saltar.[/yellow]")
-        return {
-            "city": city.name,
-            "start_date": start_date,
-            "end_date": end_date,
-            "total_days": 0,
-            "correct_pct": None,
-            "premature_pct": None,
-            "missed_pct": None,
-            "lag_mean_h": None,
-            "total_pnl": None,
-            "sharpe": None,
-            "out_json": None,
-            "skipped": True,
-            "reason": "sem dados na janela",
-        }
-
-    _console.print(f"\n[3/4] Backtest (mode={args.mode}, {args.ordertype}={args.bet}, ruído={args.noise})...")
-    yearly, capital_history, day_records, capital_flow_debug = run_backtest(
-        df, models, city,
-        ordertype=args.ordertype,
-        bet_value=args.bet,
-        noise_std=args.noise,
-        mode=args.mode,
-    )
-
-    _console.print("\n[4/4] Dashboard & métricas...")
-    stats_single = print_dashboard(
-        yearly, day_records, capital_history, models,
-        initial_capital=1000.0,
-        ordertype=args.ordertype,
-        bet_value=args.bet,
-        noise_std=args.noise,
-        model_dir=model_dir,
-    )
-
-    # Guardar resumo JSON (caminho por cidade)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_json = OUTPUT_DIR / f"{city.name}_backtest_{args.mode}_{start_date.isoformat()}_{end_date.isoformat()}.json"
-    out_json.write_text(json.dumps({
-        "city": city.name,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "mode": args.mode,
-        "ordertype": args.ordertype,
-        "bet": args.bet,
-        "noise_std": args.noise,
-        "model_dir": str(model_dir),
-        "single": {
-            "total_days": stats_single.total_days,
-            "correct_pct": stats_single.correct_pct,
-            "premature_pct": stats_single.premature_pct,
-            "missed_pct": stats_single.missed_pct,
-            "lag_mean_h": stats_single.lag_mean_h,
-            "lag_le1h_pct": stats_single.lag_le1h_pct,
-            "total_pnl": stats_single.total_pnl,
-            "sharpe": stats_single.sharpe,
-            "sortino": stats_single.sortino,
-            "seasonal_stats": stats_single.seasonal_stats,
-        },
-    }, indent=2))
-    _console.print(f"  [green]✓[/green] Resumo JSON: {out_json}")
-
-    # ─── Debug CSV: capital flow trade-a-trade (modo percent + single) ───
-    if capital_flow_debug:
-        debug_csv = OUTPUT_DIR / f"{city.name}_capital_flow_debug_{args.mode}.csv"
-        df_debug = pd.DataFrame(capital_flow_debug)
-        df_debug.to_csv(debug_csv, index=False)
-        _console.print(f"  [green]✓[/green] Debug CSV: {debug_csv}  ({len(df_debug)} trades)")
-
-        # Análise inline
-        _console.rule("[bold magenta]DIAGNÓSTICO — CAPITAL FLOW[/bold magenta]")
-
-        # Estatísticas globais
-        sum_single = df_debug["single_pnl"].sum()
-        sum_total_clip = df_debug["clip_loss"].sum()  # quanto perdeu por clipping
-
-        _console.print(
-            f"  Trades em modo percent: [bold]{len(df_debug)}[/bold]\n"
-            f"  Soma de single_pnl: [bold]${sum_single:+,.2f}[/bold]\n"
-            f"  Capital perdido por clipping ($100 piso): [bold]${sum_total_clip:+,.2f}[/bold]\n"
-        )
-
-        # Top 5 piores trades (mais negativos)
-        worst = df_debug.nsmallest(5, "single_pnl")
-        _console.print("[yellow]Top 5 piores trades:[/yellow]")
-        for _, row in worst.iterrows():
-            _console.print(
-                f"  {row['date']}  bet=${row['bet_size']:.2f}  ask={row['ask']:.3f}  "
-                f"won={row['won']}  SL={row['sold_by_stop']}  "
-                f"pnl=${row['single_pnl']:+.2f}  "
-                f"cap: ${row['cap_before']:.2f} → ${row['cap_clipped']:.2f}"
-            )
-
-        # Quando capital atinge piso pela primeira vez
-        clipped = df_debug[df_debug["clip_loss"] > 0]
-        if len(clipped) > 0:
-            first_clip = clipped.iloc[0]
-            _console.print(
-                f"\n[yellow]Primeiro clip a $100:[/yellow] {first_clip['date']}"
-            )
-            # Mostrar 5 trades antes desse evento
-            idx_first = clipped.index[0]
-            window = df_debug.iloc[max(0, idx_first-5):idx_first+1]
-            _console.print(f"\n[dim]Trades antes do primeiro clip:[/dim]")
-            for _, row in window.iterrows():
-                _console.print(
-                    f"  {row['date']}  bet=${row['bet_size']:.2f}  ask={row['ask']:.3f}  "
-                    f"won={row['won']}  pnl=${row['single_pnl']:+.2f}  "
-                    f"cap: ${row['cap_before']:.2f} → ${row['cap_clipped']:.2f}"
-                )
-
-        # Análise do progresso temporal
-        df_debug["date"] = pd.to_datetime(df_debug["date"])
-        df_debug = df_debug.sort_values("date").reset_index(drop=True)
-
-        # Resumo por trimestre para detectar padrões
-        df_debug["quarter"] = df_debug["date"].dt.to_period("Q")
-        by_q = df_debug.groupby("quarter").agg(
-            n_trades=("single_pnl", "size"),
-            pnl_total=("single_pnl", "sum"),
-            cap_min=("cap_clipped", "min"),
-            cap_max=("cap_clipped", "max"),
-            wins=("won", "sum"),
-        ).reset_index()
-        by_q["win_pct"] = by_q["wins"] / by_q["n_trades"] * 100
-
-        tbl_q = Table(box=rich_box.SIMPLE, show_header=True, title="Capital por trimestre")
-        for c in ["Trimestre", "N", "Win%", "PnL trimestre", "Cap min", "Cap max"]:
-            tbl_q.add_column(c, justify="right")
-        for _, row in by_q.iterrows():
-            tbl_q.add_row(
-                str(row["quarter"]),
-                str(int(row["n_trades"])),
-                f"{row['win_pct']:.1f}%",
-                f"${row['pnl_total']:+.0f}",
-                f"${row['cap_min']:.0f}",
-                f"${row['cap_max']:.0f}",
-            )
-        _console.print(tbl_q)
-
-    return {
-        "city": city.name,
-        "start_date": start_date,
-        "end_date": end_date,
-        "total_days": stats_single.total_days,
-        "correct_pct": stats_single.correct_pct,
-        "premature_pct": stats_single.premature_pct,
-        "missed_pct": stats_single.missed_pct,
-        "lag_mean_h": stats_single.lag_mean_h,
-        "total_pnl": stats_single.total_pnl,
-        "sharpe": stats_single.sharpe,
-        "out_json": out_json,
-    }
-
-
-def _print_multi_summary(rows: list[dict]) -> None:
-    if len(rows) <= 1:
-        return
-
-    table = Table(
-        title="Resumo multi-cidade",
-        box=rich_box.SIMPLE_HEAVY,
-        header_style="bold cyan",
-        show_header=True,
-    )
-    table.add_column("Cidade", style="bold")
-    table.add_column("Dias", justify="right")
-    table.add_column("Correct", justify="right")
-    table.add_column("Premat.", justify="right")
-    table.add_column("Missed", justify="right")
-    table.add_column("Lag h", justify="right")
-    table.add_column("PnL", justify="right")
-    table.add_column("Sharpe", justify="right")
-
-    for row in rows:
-        if row.get("error") or row.get("skipped"):
-            table.add_row(
-                row["city"],
-                str(row.get("total_days", 0)),
-                "—",
-                "—",
-                "—",
-                "—",
-                "[yellow]SKIP[/yellow]" if row.get("skipped") else "[red]ERROR[/red]",
-                "—",
-            )
-            continue
-
-        pnl = row["total_pnl"]
-        pnl_style = "green" if pnl >= 0 else "red"
-        table.add_row(
-            row["city"],
-            str(row["total_days"]),
-            f"{row['correct_pct']:.1f}%",
-            f"{row['premature_pct']:.1f}%",
-            f"{row['missed_pct']:.1f}%",
-            f"{row['lag_mean_h']:.2f}",
-            f"[{pnl_style}]${pnl:+.2f}[/{pnl_style}]",
-            f"{row['sharpe']:.2f}",
-        )
-
-    _console.print()
-    _console.print(table)
-
-
-# ══════════════════════════════════════════════════════
-#  MAIN
-# ══════════════════════════════════════════════════════
-def main():
-    parser = argparse.ArgumentParser(description="Backtester multi-cidade")
-    parser.add_argument("--city", type=str, default="munich", choices=list(CITIES.keys()),
-                        help="Cidade para backtest (default: munich)")
-    parser.add_argument("--cities", type=str,
-                        help="Cidades separadas por vírgula, ou 'all'. Ex: munich,dallas,ankara")
-    parser.add_argument("--mode", choices=["single"], default="single")
-    parser.add_argument("--years", type=int, default=3)
-    parser.add_argument("--start", type=str, help="Data início (YYYY-MM-DD)")
-    parser.add_argument("--end", type=str, help="Data fim (YYYY-MM-DD)")
-    parser.add_argument("--ordertype", choices=["fixed","percent"], default="fixed")
-    parser.add_argument("--bet", type=float, default=5.0,
-                        help="$ absoluto se fixed, %% do capital se percent")
-    parser.add_argument("--noise", type=float, default=0.05,
-                        help="Ruído gaussiano no ask do mercado simulado (default 0.05 = 5¢). "
-                             "0.0 = determinístico.")
-    args = parser.parse_args()
-
-    city_names = _parse_city_list(args.cities, args.city)
-    rows = []
-    for idx, city_name in enumerate(city_names, 1):
-        if len(city_names) > 1:
-            _console.rule(f"[bold cyan][{idx}/{len(city_names)}] {city_name}[/bold cyan]")
-        try:
-            rows.append(_run_city_backtest(args, city_name))
-        except Exception as exc:
-            if len(city_names) == 1:
-                raise
-            _console.print(f"  [red]{city_name}: backtest falhou: {exc}[/red]")
-            rows.append({
-                "city": city_name,
-                "total_days": 0,
-                "correct_pct": None,
-                "premature_pct": None,
-                "missed_pct": None,
-                "lag_mean_h": None,
-                "total_pnl": None,
-                "sharpe": None,
-                "error": str(exc),
-            })
-
-    _print_multi_summary(rows)
-
-
-if __name__ == "__main__":
-    main()

@@ -464,9 +464,8 @@ def _settle_paper_positions_for_day(state: CityState, city_today: date) -> float
 
         # Tenta múltiplos formatos comuns de data para evitar falhas de parsing
         target_keys = {
-            target_day.strftime("%Y-%m-%d"), # ISO 8601
-            target_day.strftime("%d/%m/%Y"), # EU
-            target_day.strftime("%m/%d/%Y"), # US
+            target_day.strftime("%Y-%m-%d"),  # ISO 8601
+            target_day.strftime("%d/%m/%Y"),  # EU (formato mais comum nos dados)
         }
         max_temp: Optional[float] = None
         try:
@@ -832,7 +831,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     _actions_logged: list = []
 
     # Reset diário (Fix 11) + FIX 2: guardar stats anterior antes de resetar
-    if not hasattr(state, '_last_date'):
+    if state._last_date is None:
         state._last_date = city_today
     if city_today != state._last_date:
         # Guardar stats do dia anterior antes de perder
@@ -917,78 +916,86 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
         except Exception as e:
             print(f"  {C['yellow']}{city.name}: Forecast fetch failed: {e}{R}")
 
-    # Atualizar slots
+    # Atualizar slots (zona crítica — protegida contra a thread do Telegram)
     if new_obs:
         h_obs, m_obs = new_obs["hour"], new_obs["minute"]
         h_slot, s30 = ceil_slot(h_obs, m_obs)
 
         if city.day_start <= h_slot <= city.day_end:
-            same_slot_count = sum(
-                1 for s in state.slots_so_far
-                if s["hour"] == h_slot and s["slot30"] == s30
-            )
-            state.series_today[(h_slot, s30, same_slot_count)] = new_obs["temp_c"]
-            if "cloud_cover" in new_obs and new_obs["cloud_cover"] is not None:
-                state.cloud_by_hour[h_slot] = new_obs["cloud_cover"]
-
-            slot_entry = {
-                "date": city_today,
-                "hour": h_slot,
-                "slot30": s30,
-                "temp_c": new_obs["temp_c"],
-                "cloud_cover": new_obs.get("cloud_cover", 50),
-                "humidity": new_obs.get("humidity", 70),
-                "dewpoint_c": new_obs.get("dewpoint_c", new_obs["temp_c"] - 10),
-                "pressure_hpa": new_obs.get("pressure_hpa", 1013),
-                "wind_dir_deg": new_obs.get("wind_dir_deg", 0),
-                "wind_speed_kmh": new_obs.get("wind_speed_kmh", 5),
-                "wind_gust_kmh": new_obs.get("wind_gust_kmh", 8),
-                "uv_index": new_obs.get("uv_index", 3),
-            }
-
-            exists = any(s["hour"] == h_slot and s["slot30"] == s30 for s in state.slots_so_far)
-            if exists:
-                current_rmax = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else None
-                latest_slot_key = max(
-                    (int(s["hour"]) * 60 + int(s.get("slot30", 0)) for s in state.slots_so_far),
-                    default=None,
+            with state._lock:
+                same_slot_count = sum(
+                    1 for s in state.slots_so_far
+                    if s["hour"] == h_slot and s["slot30"] == s30
                 )
-                new_slot_key = h_slot * 60 + s30
-                for s in state.slots_so_far:
-                    if s["hour"] == h_slot and s["slot30"] == s30:
-                        if (
-                            state.entry and state.entry.bought
-                            and latest_slot_key is not None
-                            and new_slot_key < latest_slot_key
-                            and current_rmax is not None
-                            and slot_entry["temp_c"] > current_rmax
-                        ):
-                            print(
-                                f"  {C['yellow']}{city.name}: clamped late high temp "
-                                f"at {h_slot:02d}:{s30:02d}{R}"
-                            )
-                            # Guardar temp real para o modelo usar
-                            s["temp_c_real"] = slot_entry["temp_c"]
-                            slot_entry["temp_c"] = s["temp_c"]
-                        else:
-                            # Sincronizar temp real quando não há clamp
-                            s["temp_c_real"] = slot_entry["temp_c"]
-                        s["date"] = city_today
-                        s["temp_c"] = slot_entry["temp_c"]
-                        if "hour" in slot_entry:
-                            s["hour"] = slot_entry["hour"]
-                        if "slot30" in slot_entry:
-                            s["slot30"] = slot_entry["slot30"]
-                        for key in (
-                            "cloud_cover", "humidity", "dewpoint_c", "pressure_hpa",
-                            "wind_dir_deg", "wind_speed_kmh", "wind_gust_kmh", "uv_index",
-                        ):
-                            if key in new_obs and new_obs[key] is not None:
-                                s[key] = slot_entry[key]
-                        break
-            else:
-                state.slots_so_far.append(slot_entry)
-                state.slots_so_far.sort(key=lambda x: x["hour"] * 60 + x["slot30"])
+                state.series_today[(h_slot, s30, same_slot_count)] = new_obs["temp_c"]
+                if "cloud_cover" in new_obs and new_obs["cloud_cover"] is not None:
+                    state.cloud_by_hour[h_slot] = new_obs["cloud_cover"]
+
+                slot_entry = {
+                    "date": city_today,
+                    "hour": h_slot,
+                    "slot30": s30,
+                    "temp_c": new_obs["temp_c"],
+                    "cloud_cover": new_obs.get("cloud_cover", 50),
+                    "humidity": new_obs.get("humidity", 70),
+                    "dewpoint_c": new_obs.get("dewpoint_c", new_obs["temp_c"] - 10),
+                    "pressure_hpa": new_obs.get("pressure_hpa", 1013),
+                    "wind_dir_deg": new_obs.get("wind_dir_deg", 0),
+                    "wind_speed_kmh": new_obs.get("wind_speed_kmh", 5),
+                    "wind_gust_kmh": new_obs.get("wind_gust_kmh", 8),
+                    "uv_index": new_obs.get("uv_index", 3),
+                }
+
+                exists = any(s["hour"] == h_slot and s["slot30"] == s30 for s in state.slots_so_far)
+                if exists:
+                    current_rmax = max(s["temp_c"] for s in state.slots_so_far) if state.slots_so_far else None
+                    latest_slot_key = max(
+                        (int(s["hour"]) * 60 + int(s.get("slot30", 0)) for s in state.slots_so_far),
+                        default=None,
+                    )
+                    new_slot_key = h_slot * 60 + s30
+                    for s in state.slots_so_far:
+                        if s["hour"] == h_slot and s["slot30"] == s30:
+                            if (
+                                state.entry and state.entry.bought
+                                and latest_slot_key is not None
+                                and new_slot_key < latest_slot_key
+                                and current_rmax is not None
+                                and slot_entry["temp_c"] > current_rmax
+                            ):
+                                print(
+                                    f"  {C['yellow']}{city.name}: clamped late high temp "
+                                    f"at {h_slot:02d}:{s30:02d}{R}"
+                                )
+                                # Guardar temp real para o modelo usar
+                                s["temp_c_real"] = slot_entry["temp_c"]
+                                slot_entry["temp_c"] = s["temp_c"]
+                            else:
+                                # Sincronizar temp real quando não há clamp
+                                s["temp_c_real"] = slot_entry["temp_c"]
+                            s["date"] = city_today
+                            s["temp_c"] = slot_entry["temp_c"]
+                            if "hour" in slot_entry:
+                                s["hour"] = slot_entry["hour"]
+                            if "slot30" in slot_entry:
+                                s["slot30"] = slot_entry["slot30"]
+                            for key in (
+                                "cloud_cover", "humidity", "dewpoint_c", "pressure_hpa",
+                                "wind_dir_deg", "wind_speed_kmh", "wind_gust_kmh", "uv_index",
+                            ):
+                                if key in new_obs and new_obs[key] is not None:
+                                    s[key] = slot_entry[key]
+                            # FIX: actualizar series_today para slot existente
+                            for key in list(state.series_today.keys()):
+                                if key[0] == h_slot and key[1] == s30:
+                                    state.series_today[key] = s["temp_c"]
+                            break
+                else:
+                    state.slots_so_far.append(slot_entry)
+                    state.slots_so_far.sort(key=lambda x: x["hour"] * 60 + x["slot30"])
+                    # FIX: adicionar a series_today para novo slot
+                    new_idx = len(state.slots_so_far) - 1
+                    state.series_today[(h_slot, s30, new_idx)] = slot_entry["temp_c"]
 
     from predictor import update_history_max, init_history_max
     history_max_for_features = dict(state.history_max)
@@ -1008,8 +1015,8 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     market_key = (now_city.hour, now_city.minute // 10)
     if state.last_market_min != market_key or state.market is None:
         try:
-            state.market = state.fetcher.fetch_market(city_today)
-            if state.market and state.clob:
+            _market = state.fetcher.fetch_market(city_today)
+            if _market and state.clob:
                 running_max_ref = (
                     max((s["temp_c"] for s in state.slots_so_far), default=15.0)
                     if state.slots_so_far
@@ -1017,7 +1024,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 )
                 rmax_floor = int(math.floor(running_max_ref))
                 enriched_brackets = []
-                for b in state.market["brackets"]:
+                for b in _market["brackets"]:
                     mid_temp = (float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2.0
                     if (
                         abs(mid_temp - rmax_floor) <= 3.0
@@ -1027,8 +1034,11 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                         enriched_brackets.append(state.clob.enrich_bracket(b))
                     else:
                         enriched_brackets.append(b)
-                state.market["brackets"] = enriched_brackets
-            state.last_market_min = market_key
+                _market["brackets"] = enriched_brackets
+            # Escrita protegida contra a thread do Telegram
+            with state._lock:
+                state.market = _market
+                state.last_market_min = market_key
         except Exception as e:
             print(f"  {C['yellow']}{city.name}: Fetch market failed: {e}{R}")
 
@@ -1094,34 +1104,33 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
                 pass
 
         if _skip and _rec and state.entry:
-            if hasattr(state.entry, "restore"):
-                state.entry.restore(_rec, state.strategy_mode)
-            else:
-                state.entry.bought = True
-                state.entry.record = _rec
-                if hasattr(state.entry, 'strategy_used'):
-                    state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
+            with state._lock:
+                if hasattr(state.entry, "restore"):
+                    state.entry.restore(_rec, state.strategy_mode)
+                else:
+                    state.entry.bought = True
+                    state.entry.record = _rec
+                    if hasattr(state.entry, 'strategy_used'):
+                        state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
             print(f"  {C['yellow']}{city.name}: Posição existente detectada "
                   f"— a saltar entrada{R}")
 
             # Verificar se stop-loss já foi disparado antes do restart
-            _sl_already_triggered = False
             if state.slots_so_far and state.entry.record:
                 current_temp = max(s["temp_c"] for s in state.slots_so_far)
                 sl_check = state.entry.check_stop_loss(current_temp)
                 if sl_check:
                     # Marcar como vendida sem enviar alerta duplicado
-                    state.entry.sold_by_stop = True
-                    state.entry.record["sold_by_stop"] = True
-                    if hasattr(state.entry, '_stop_loss_blocked_alerted'):
-                        state.entry._stop_loss_blocked_alerted = True
+                    with state._lock:
+                        state.entry.sold_by_stop = True
+                        state.entry.record["sold_by_stop"] = True
+                        if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+                            state.entry._stop_loss_blocked_alerted = True
                     print(f"  {C['yellow']}{city.name}: stop-loss já disparado antes do restart — marcando como vendida{R}")
-                    _sl_already_triggered = True
-
-            # Só limpar o flag se NÃO foi detectado stop-loss prévio — senão
-            # anulamos a guarda contra alertas duplicados acima.
-            if not _sl_already_triggered and hasattr(state.entry, '_stop_loss_blocked_alerted'):
-                state.entry._stop_loss_blocked_alerted = False
+                else:
+                    # Só resetar o flag se NÃO foi triggerado antes do restart
+                    if hasattr(state.entry, '_stop_loss_blocked_alerted'):
+                        state.entry._stop_loss_blocked_alerted = False
 
     # Predição e entrada
     h_now = city_now(city).hour
