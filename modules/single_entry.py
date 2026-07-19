@@ -48,6 +48,7 @@ class SingleEntry:
         stop_loss_delta = None
         min_buy_ask = None
         max_buy_ask = None
+        plateau_timeout_hours = None
 
         if _cfg_path.exists():
             try:
@@ -58,6 +59,7 @@ class SingleEntry:
                 stop_loss_delta = sc.get("stop_loss_delta")
                 min_buy_ask = sc.get("min_buy_ask")
                 max_buy_ask = sc.get("max_buy_ask")
+                plateau_timeout_hours = sc.get("plateau_timeout_hours")
             except Exception:
                 pass
 

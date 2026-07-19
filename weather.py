@@ -332,12 +332,8 @@ def _v2_pws_history_parse(observations: list, city_tz: ZoneInfo) -> list[dict]:
             "pressure_hpa":   _f(metric, "pressureMax", _f(metric, "pressureMin", 1013.0)),
             "wind_dir_deg":   _f(obs, "winddirAvg", 0.0),
             # FIX Bug 5.2: validar/converter wind speed que pode vir em mph
-            "wind_speed_kmh": _maybe_convert_mph_to_kmh(
-                _f(metric, "windspeedAvg", 0.0)
-            ) or 0.0,  # 0 = sem vento (válido!)
-            "wind_gust_kmh":  _maybe_convert_mph_to_kmh(
-                _f(metric, "windgustAvg", _f(metric, "windgustHigh", 0.0))
-            ) or 0.0,
+            "wind_speed_kmh": _maybe_convert_mph_to_kmh(_f(metric, "windspeedAvg", 0.0)),
+            "wind_gust_kmh":  _maybe_convert_mph_to_kmh(_f(metric, "windgustAvg", _f(metric, "windgustHigh", 0.0))),
             "uv_index":       _f(obs, "uvHigh", 0.0),  # 0 = noite ou nublado (válido!)
         })
     return rows
@@ -421,14 +417,28 @@ def fetch_wu_day(city: CityConfig, day: date,
         return []
 
     # Sanity check de temperatura (margem justa para detetar Fahrenheit vs Celsius)
+    # FIX Bug #4: check bidireccional — antes só bloqueava temperaturas ALTAS,
+    # falhando em detectar conversões erradas que produzem temperaturas MUITO
+    # BAIXAS (ex: Fahrenheit interpretado como Celsius em dias frios → pico
+    # pode ficar 20°C abaixo do real).
     if city.climatology:
         clim_max = max(city.climatology.values())
-        sanity_limit = clim_max + 15.0 
-        if any(row.get("temp_c", 0.0) > sanity_limit for row in rows):
+        clim_min = min(city.climatology.values())
+        sanity_high = clim_max + 15.0
+        sanity_low  = clim_min - 25.0
+        temps = [row.get("temp_c", 0.0) for row in rows]
+        if any(t > sanity_high for t in temps):
             print(
-                f"  [WU] {city.name}: invalid temperature scale "
-                f"max_temp={max(row.get('temp_c', 0.0) for row in rows):.1f} "
-                f"sanity_limit={sanity_limit:.1f}"
+                f"  [WU] {city.name}: invalid high temperature "
+                f"max_temp={max(temps):.1f} "
+                f"sanity_high={sanity_high:.1f}"
+            )
+            return []
+        if any(t < sanity_low for t in temps):
+            print(
+                f"  [WU] {city.name}: invalid low temperature "
+                f"min_temp={min(temps):.1f} "
+                f"sanity_low={sanity_low:.1f}"
             )
             return []
     return rows
@@ -729,7 +739,13 @@ def bootstrap_today(city: CityConfig, api_key: str,
             series:  dict[tuple, float] = {}
             obs_min: dict[tuple, tuple] = {}
             for r in rows:
-                key = ceil_slot(r["hour"], r["minute"])
+                # FIX Bug #3: usar floor_slot (slot completo anterior) em vez de
+                # ceil_slot — o caller filtra slots passados via floor_slot(limit),
+                # por isso precisamos que o mapeamento seja consistente. Com
+                # ceil_slot, observações do slot actual (em curso) eram colocadas
+                # nesse slot e depois excluídas pelo caller, levando a perda de
+                # dados e slots_so_far incompletos.
+                key = floor_slot(r["hour"], r["minute"])
                 if key not in series or r["temp_c"] >= series[key]:
                     series[key]  = r["temp_c"]
                     obs_min[key] = (r["hour"], r["minute"])
@@ -739,7 +755,7 @@ def bootstrap_today(city: CityConfig, api_key: str,
             seen:  set[tuple]  = set()
             slots: list[dict]  = []
             for r in sorted(rows, key=lambda x: x["hour"] * 60 + x["minute"]):
-                k = ceil_slot(r["hour"], r["minute"])
+                k = floor_slot(r["hour"], r["minute"])
                 if k not in seen:
                     seen.add(k)
                     slots.append({
@@ -801,7 +817,8 @@ def bootstrap_om_today(city: CityConfig, session: requests.Session, verbose: boo
     series:  dict[tuple, float] = {}
     obs_min: dict[tuple, tuple] = {}
     for r in rows:
-        key = ceil_slot(r["hour"], r["minute"])
+        # FIX Bug #3: usar floor_slot para consistência com o caller (ver acima).
+        key = floor_slot(r["hour"], r["minute"])
         if key not in series or r["temp_c"] >= series[key]:
             series[key]  = r["temp_c"]
             obs_min[key] = (r["hour"], r["minute"])
@@ -811,7 +828,7 @@ def bootstrap_om_today(city: CityConfig, session: requests.Session, verbose: boo
     seen:  set[tuple]  = set()
     slots: list[dict]  = []
     for r in sorted(rows, key=lambda x: x["hour"] * 60 + x["minute"]):
-        k = ceil_slot(r["hour"], r["minute"])
+        k = floor_slot(r["hour"], r["minute"])
         if k not in seen:
             seen.add(k)
             slots.append({
