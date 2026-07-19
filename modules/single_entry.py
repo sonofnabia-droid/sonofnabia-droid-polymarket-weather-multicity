@@ -17,6 +17,67 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from cities.config import CityConfig
 
 
+
+# ══════════════════════════════════════════════════════
+#  FUNCOES DE MODULO (para reutilizar em backtester/live_bot)
+# ══════════════════════════════════════════════════════
+
+def select_target_bracket(market: dict | None, running_max: float) -> dict | None:
+    """
+    Selecciona o bracket Polymarket que contem floor(running_max).
+
+    Logica (igual em live_bot e backtester — FIX Bug #8):
+      1. Match exacto: bracket onde temp_lo <= target <= temp_hi
+      2. Cauda "or higher" (hi=99): target >= temp_lo
+      3. Cauda "or lower" (lo=-99): target <= temp_hi
+      4. Mais proximo por midpoint (caudas usam limite único)
+    """
+    if not market:
+        return None
+    brackets = market.get("brackets") or []
+    if not brackets:
+        return None
+
+    target_temp = int(math.floor(running_max))
+
+    # 1. Match exacto
+    for bracket in brackets:
+        lo = bracket.get("temp_lo")
+        hi = bracket.get("temp_hi")
+        if lo is None or hi is None:
+            continue
+        if lo <= target_temp <= hi:
+            return bracket
+
+    # 2. Fallback: bracket de cauda "or higher" / "or lower"
+    for bracket in brackets:
+        lo = bracket.get("temp_lo")
+        hi = bracket.get("temp_hi")
+        if lo is None or hi is None:
+            continue
+        if hi >= 99 and target_temp >= lo:
+            return bracket
+        if lo <= -99 and target_temp <= hi:
+            return bracket
+
+    # 3. Fallback: bracket mais proximo
+    def _distance(b):
+        lo = float(b.get("temp_lo", 0))
+        hi = float(b.get("temp_hi", 0))
+        if hi >= 99:
+            return abs(lo - target_temp)
+        if lo <= -99:
+            return abs(hi - target_temp)
+        return abs((lo + hi) / 2 - target_temp)
+
+    valid_brackets = [
+        b for b in brackets
+        if b.get("temp_lo") is not None and b.get("temp_hi") is not None
+    ]
+    if valid_brackets:
+        return min(valid_brackets, key=_distance)
+    return None
+
 class SingleEntry:
     """Single Entry — 1 compra com stop-loss.
 
@@ -121,8 +182,10 @@ class SingleEntry:
 
         # --- FILTRO DE ESTABILIDADE (PLATEAU) ---
         if slots_so_far and len(slots_so_far) >= 2:
-            # Encontrar o slot de ~30 min atrás (não o penúltimo da lista)
-            now_minutes = hour * 60 + (slots_so_far[-1].get("slot30", 0) if slots_so_far else 0)
+            # FIX Bug #10: usar hour passado como parametro (nao slots_so_far[-1]),
+            # porque o caller pode chamar evaluate() ANTES de adicionar o slot actual
+            # a slots_so_far.
+            now_minutes = hour * 60
             target_minutes = now_minutes - 30
 
             # Buscar o slot mais próximo de 30 min atrás
@@ -215,73 +278,78 @@ class SingleEntry:
         }]
 
     @staticmethod
-    def _select_target_bracket(market: dict | None, running_max: float) -> dict | None:
-        if not market:
-            return None
-        brackets = market.get("brackets") or []
-        if not brackets:
-            return None
-
-        target_temp = int(math.floor(running_max))
-
-        # 1. Match exacto
-        best = None
-        for bracket in brackets:
-            lo = bracket.get("temp_lo")
-            hi = bracket.get("temp_hi")
-            if lo is None or hi is None:
-                continue
-            if lo <= target_temp <= hi:
-                best = bracket
-                break
-
-        if best is not None:
-            return best
-
-        # 2. Fallback: bracket de cauda "or higher" / "or lower"
-        for bracket in brackets:
-            lo = bracket.get("temp_lo")
-            hi = bracket.get("temp_hi")
-            if lo is None or hi is None:
-                continue
-            if hi >= 99 and target_temp >= lo:
-                return bracket
-            if lo <= -99 and target_temp <= hi:
-                return bracket
-
-        # 3. Fallback: bracket mais próximo (usar temp_lo para caudas, midpoint para normais)
-        def _distance(b):
-            lo = float(b.get("temp_lo", 0))
-            hi = float(b.get("temp_hi", 0))
-            if hi >= 99:
-                return abs(lo - target_temp)  # distância ao limite inferior
-            if lo <= -99:
-                return abs(hi - target_temp)
-            return abs((lo + hi) / 2 - target_temp)
-
-        valid_brackets = [
-            b for b in brackets
-            if b.get("temp_lo") is not None and b.get("temp_hi") is not None
-        ]
-        if valid_brackets:
-            return min(valid_brackets, key=_distance)
-        return None
+    def _select_target_bracket(self, market: dict | None, running_max: float) -> dict | None:
+        # FIX Bug #8: delega para a funcao de modulo select_target_bracket
+        # para garantir consistencia entre live_bot e backtester (antes o
+        # backtester recalculava localmente com lógica diferente).
+        return select_target_bracket(market, running_max)
 
     def check_stop_loss(self, current_temp: float) -> dict | None:
         if not self.bought or self.sold_by_stop or self.record is None:
             return None
 
         bracket_hi = self.record.get("temp_hi")
-        if bracket_hi is None or bracket_hi >= 99:
+        bracket_lo = self.record.get("temp_lo")
+
+        # FIX Bug #9: se temp_hi/temp_lo em falta no record (ex: restart
+        # com dados incompletos), nao desativar silenciosamente o stop-loss.
+        # Tentar obter do bracket_label ou abortar com log explicito.
+        if bracket_hi is None or bracket_lo is None:
             return None
 
-        trigger_temp = bracket_hi + self.stop_loss_delta
+        # FIX Bug #6: tratar brackets de cauda ("or higher" / "or lower").
+        # Antes, a condicao `bracket_hi >= 99` desativava completamente o
+        # stop-loss para "X or higher", mantendo a posicao ate expiracao mesmo
+        # quando claramente perdida (ex: fim do dia, temp 5°C abaixo de X).
+        trigger_high = bracket_hi + self.stop_loss_delta  # normal: >hi = perdeu
+        trigger_low  = bracket_lo - self.stop_loss_delta  # normal: <lo = perdeu
+
+        if bracket_hi >= 99:
+            # "X°C or higher" — ganha se peak >= bracket_lo.
+            # Stop-loss: temp atual ja caiu demasiado baixo para o pico
+            # poder atingir bracket_lo. trigger = bracket_lo - delta.
+            trigger_temp = bracket_lo - self.stop_loss_delta
+            if current_temp <= trigger_temp:
+                return {
+                    "trigger_temp": trigger_temp,
+                    "current_temp": current_temp,
+                    "bracket_lo":   bracket_lo,
+                    "bracket_hi":   bracket_hi,
+                    "position":     self.record,
+                    "reason": (f"STOP-LOSS (or-higher): temp={current_temp:.1f}°C <= "
+                               f"bracket_lo={bracket_lo:.0f}°C - "
+                               f"{self.stop_loss_delta:.1f}°C"),
+                }
+            return None
+
+        if bracket_lo <= -99:
+            # "X°C or lower" — ganha se peak <= bracket_hi.
+            # Stop-loss: temp atual ja subiu demasiado alta para o pico
+            # poder ficar <= bracket_hi. trigger = bracket_hi + delta.
+            trigger_temp = bracket_hi + self.stop_loss_delta
+            if current_temp >= trigger_temp:
+                return {
+                    "trigger_temp": trigger_temp,
+                    "current_temp": current_temp,
+                    "bracket_lo":   bracket_lo,
+                    "bracket_hi":   bracket_hi,
+                    "position":     self.record,
+                    "reason": (f"STOP-LOSS (or-lower): temp={current_temp:.1f}°C >= "
+                               f"bracket_hi={bracket_hi:.0f}°C + "
+                               f"{self.stop_loss_delta:.1f}°C"),
+                }
+            return None
+
+        # Bracket normal: stop-loss se temp >= bracket_hi + delta
+        # (pico ja ultrapassou o nosso teto — posicao perdida).
+        trigger_temp = trigger_high
         if current_temp >= trigger_temp:
             return {
                 "trigger_temp": trigger_temp,
                 "current_temp": current_temp,
-                "bracket_hi": bracket_hi,
-                "position": self.record,
+                "bracket_lo":   bracket_lo,
+                "bracket_hi":   bracket_hi,
+                "position":     self.record,
                 "reason": (f"STOP-LOSS: temp={current_temp:.1f}°C >= "
                            f"bracket_hi={bracket_hi:.0f}°C + "
                            f"{self.stop_loss_delta:.1f}°C"),
@@ -295,11 +363,19 @@ class SingleEntry:
         self.strategy_used = record.get("strategy") if isinstance(record, dict) else None
 
     def restore(self, record: dict, strategy_used: str | None = None) -> None:
-        # FIX Bug 1.5: resetar sold_by_stop explicitamente para evitar
-        # estado inconsistente quando o record não tem a chave sold_by_stop.
+        # FIX Bug #5: preservar sold_by_stop do record se la estiver.
+        # O Bug 1.5 (commit 7ce499c) forçava sempre False, descartando o
+        # valor True guardado em disco por mark_sold_by_stop(). Isto levava
+        # a stop-loss duplicado pós-restart — se o stop-loss ja tinha sido
+        # executado antes do restart, a posicao era vendida outra vez.
+        # Agora le do record primeiro (igual ao que foi persistido),
+        # fallback a False se a chave nao existir (record antigo ou corrupto).
         self.bought = True
         self.record = record
-        self.sold_by_stop = False
+        if isinstance(record, dict) and record.get("sold_by_stop", False):
+            self.sold_by_stop = True
+        else:
+            self.sold_by_stop = False
         self.strategy_used = strategy_used or (record.get("strategy") if isinstance(record, dict) else None)
 
     def mark_sold_by_stop(self, sell_price: float, pnl: float) -> None:

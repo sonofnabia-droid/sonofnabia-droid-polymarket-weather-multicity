@@ -46,7 +46,7 @@ from rich import box as rich_box
 from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, predict_ensemble, build_features
 from weather import ceil_slot, is_plausible_temp
-from modules.single_entry import SingleEntry
+from modules.single_entry import SingleEntry, select_target_bracket
 
 _console = Console(force_terminal=True)
 OUTPUT_DIR = Path("backtest_results")
@@ -634,17 +634,16 @@ def run_backtest(
                 for act in entry_single.evaluate(p_ens, h, market_sim, running_max, fc_agreement, slots_so_far):
                     if act.get("size_usdc", 0) > 0:
                         # Estratégia real: apostar no bracket que contém floor(running_max)
-                        target_temp = int(math.floor(running_max))
-                        best = None
-                        for b in brackets:
-                            if b["temp_lo"] <= target_temp <= b["temp_hi"]:
-                                best = b
-                                break
-                        # Fallback: bracket mais próximo se nenhum contém exactamente
+                        # FIX Bug #8: usar select_target_bracket partilhada com
+                        # SingleEntry.evaluate() para garantir consistencia
+                        # (antes o backtester recalculava localmente com logica
+                        # diferente que nao tratava caudas "or higher/lower").
+                        best = select_target_bracket(brackets, running_max) if brackets else None
                         if best is None:
+                            # Fallback final: bracket mais próximo (sem tratamento de cauda)
                             best = min(
                                 brackets,
-                                key=lambda b: abs(((b["temp_lo"] + b["temp_hi"]) / 2) - target_temp),
+                                key=lambda b: abs(((b["temp_lo"] + b["temp_hi"]) / 2) - int(math.floor(running_max))),
                             )
                         entry_single.mark_bought(0, {
                             "hour": h, "slot30": s,

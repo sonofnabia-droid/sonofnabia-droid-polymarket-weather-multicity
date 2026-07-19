@@ -220,11 +220,16 @@ def _v3_current_parse(data: dict, city_tz: ZoneInfo) -> dict | None:
             hour = dt.hour
             minute = dt.minute
         except Exception:
-            hour = datetime.now(tz=city_tz).hour
-            minute = 0
+            # FIX Bug #11: fallback usa minuto real (não 0) para colocar
+            # observação no slot correcto. Antes colocava no início da hora
+            # (slot errado), causando inconsistência com latest_obs/peak_temp.
+            now = datetime.now(tz=city_tz)
+            hour = now.hour
+            minute = now.minute
     else:
-        hour = datetime.now(tz=city_tz).hour
-        minute = 0
+        now = datetime.now(tz=city_tz)
+        hour = now.hour
+        minute = now.minute
 
     cloud_cover = int(data.get("cloudCover") or 50)
 
@@ -690,12 +695,16 @@ def ceil_slot(hour: int, minute: int) -> tuple[int, int]:
       minute=0-29  → slot 30 da mesma hora
       minute=30-59 → slot  0 da hora seguinte
     """
-    if minute < 30:
-        return (hour, 30)
-    h = hour + 1
-    if h == 24:
+    # FIX Bug #7: validar hour/minute para evitar keys invalidas como (24,30)
+    # ou (12,60) que corrompiam dicionarios de slots e causavam crash.
+    h = max(0, min(23, int(hour)))
+    m = max(0, min(59, int(minute)))
+    if m < 30:
+        return (h, 30)
+    nh = h + 1
+    if nh == 24:
         return (23, 30)
-    return (h, 0)
+    return (nh, 0)
 
 
 def floor_slot(hour: int, minute: int) -> tuple[int, int]:
@@ -705,9 +714,12 @@ def floor_slot(hour: int, minute: int) -> tuple[int, int]:
       minute=0-29  → slot 0 da mesma hora
       minute=30-59 → slot 30 da mesma hora
     """
-    if minute < 30:
-        return (hour, 0)
-    return (hour, 30)
+    # FIX Bug #7: validar hour/minute (ver ceil_slot acima).
+    h = max(0, min(23, int(hour)))
+    m = max(0, min(59, int(minute)))
+    if m < 30:
+        return (h, 0)
+    return (h, 30)
 
 
 def bootstrap_today(city: CityConfig, api_key: str,
