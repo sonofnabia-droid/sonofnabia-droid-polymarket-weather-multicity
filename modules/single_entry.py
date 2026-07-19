@@ -40,25 +40,31 @@ def select_target_bracket(market: dict | None, running_max: float) -> dict | Non
 
     target_temp = int(math.floor(running_max))
 
-    # 1. Match exacto
+    # 1. Match exacto (exclui caudas hi>=99 ou lo<=-99 — tratadas no passo 2)
     for bracket in brackets:
         lo = bracket.get("temp_lo")
         hi = bracket.get("temp_hi")
         if lo is None or hi is None:
             continue
+        if hi >= 99 or lo <= -99:
+            continue
         if lo <= target_temp <= hi:
             return bracket
 
     # 2. Fallback: bracket de cauda "or higher" / "or lower"
+    # FIX Bug #12: escolher o mais proximo de target_temp (nao o primeiro)
+    tail_brackets = []
     for bracket in brackets:
         lo = bracket.get("temp_lo")
         hi = bracket.get("temp_hi")
         if lo is None or hi is None:
             continue
         if hi >= 99 and target_temp >= lo:
-            return bracket
+            tail_brackets.append((abs(lo - target_temp), bracket))
         if lo <= -99 and target_temp <= hi:
-            return bracket
+            tail_brackets.append((abs(hi - target_temp), bracket))
+    if tail_brackets:
+        return min(tail_brackets, key=lambda x: x[0])[1]
 
     # 3. Fallback: bracket mais proximo
     def _distance(b):

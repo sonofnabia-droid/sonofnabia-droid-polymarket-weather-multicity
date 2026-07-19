@@ -334,7 +334,7 @@ def _v2_pws_history_parse(observations: list, city_tz: ZoneInfo) -> list[dict]:
             "wx":          "",
             "source":      "WU-PWS",
             "dewpoint_c":     _f(metric, "dewptAvg", temp_c - 10),
-            "pressure_hpa":   _f(metric, "pressureMax", _f(metric, "pressureMin", 1013.0)),
+            "pressure_hpa":   _f(metric, "pressureAvg", _f(metric, "pressureMax", _f(metric, "pressureMin", 1013.0))),
             "wind_dir_deg":   _f(obs, "winddirAvg", 0.0),
             # FIX Bug 5.2: validar/converter wind speed que pode vir em mph
             "wind_speed_kmh": _maybe_convert_mph_to_kmh(_f(metric, "windspeedAvg", 0.0)),
@@ -764,27 +764,33 @@ def bootstrap_today(city: CityConfig, api_key: str,
 
             _bootstrap_obs_min[city_name] = obs_min
 
-            seen:  set[tuple]  = set()
-            slots: list[dict]  = []
-            for r in sorted(rows, key=lambda x: x["hour"] * 60 + x["minute"]):
-                k = floor_slot(r["hour"], r["minute"])
-                if k not in seen:
-                    seen.add(k)
-                    slots.append({
-                        "date":           today,
-                        "hour":           k[0],
-                        "slot30":         k[1],
-                        "temp_c":         r["temp_c"],
-                        "cloud_cover":    r.get("cloud_cover", 50),
-                        "humidity":       r.get("humidity", 70),
-                        "source":         "WU",
-                        "dewpoint_c":     r.get("dewpoint_c",     r["temp_c"] - 10),
-                        "pressure_hpa":   r.get("pressure_hpa",   1013),
-                        "wind_dir_deg":   r.get("wind_dir_deg",   0),
-                        "wind_speed_kmh": r.get("wind_speed_kmh", 5),
-                        "wind_gust_kmh":  r.get("wind_gust_kmh",  8),
-                        "uv_index":       r.get("uv_index",       3),
-                    })
+            # FIX Bug #14: usar a temperatura máxima (series) e o seu tempo (obs_min)
+            # para os slots, em vez da primeira leitura — garante consistência
+            # entre temp_c do slot e o obs_min que o registra.
+            slots: list[dict] = []
+            for k in sorted(series.keys(), key=lambda x: x[0] * 60 + x[1]):
+                h, s30 = k
+                obs_h, obs_m = obs_min.get(k, (h, s30 * 30))
+                r = next((row for row in rows if floor_slot(row["hour"], row["minute"]) == k), None)
+                base = r if r else {"cloud_cover": 50, "humidity": 70, "source": "WU",
+                                    "dewpoint_c": 0, "pressure_hpa": 1013,
+                                    "wind_dir_deg": 0, "wind_speed_kmh": 5,
+                                    "wind_gust_kmh": 8, "uv_index": 3}
+                slots.append({
+                    "date":           today,
+                    "hour":           h,
+                    "slot30":         s30,
+                    "temp_c":         series[k],
+                    "cloud_cover":    base.get("cloud_cover", 50),
+                    "humidity":       base.get("humidity", 70),
+                    "source":         "WU",
+                    "dewpoint_c":     base.get("dewpoint_c",     series[k] - 10),
+                    "pressure_hpa":   base.get("pressure_hpa",   1013),
+                    "wind_dir_deg":   base.get("wind_dir_deg",   0),
+                    "wind_speed_kmh": base.get("wind_speed_kmh", 5),
+                    "wind_gust_kmh":  base.get("wind_gust_kmh",  8),
+                    "uv_index":       base.get("uv_index",       3),
+                })
             return series, slots
         else:
             # WU falhou — fetch_wu_day já imprimiu a causa real
@@ -837,27 +843,32 @@ def bootstrap_om_today(city: CityConfig, session: requests.Session, verbose: boo
 
     _bootstrap_obs_min[city_name] = obs_min
 
-    seen:  set[tuple]  = set()
-    slots: list[dict]  = []
-    for r in sorted(rows, key=lambda x: x["hour"] * 60 + x["minute"]):
-        k = floor_slot(r["hour"], r["minute"])
-        if k not in seen:
-            seen.add(k)
-            slots.append({
-                "date":           today,
-                "hour":           k[0],
-                "slot30":         k[1],
-                "temp_c":         r["temp_c"],
-                "cloud_cover":    r.get("cloud_cover",    50),
-                "humidity":       r.get("humidity",       70),
-                "source":         "Open-Meteo",
-                "dewpoint_c":     r.get("dewpoint_c",     r["temp_c"] - 10),
-                "pressure_hpa":   r.get("pressure_hpa",   1013.0),
-                "wind_dir_deg":   r.get("wind_dir_deg",   0.0),
-                "wind_speed_kmh": r.get("wind_speed_kmh", 5.0),
-                "wind_gust_kmh":  r.get("wind_gust_kmh",  8.0),
-                "uv_index":       r.get("uv_index",       3.0),
-            })
+    # FIX Bug #14: usar temperatura máxima (series) e seu tempo (obs_min)
+    # para os slots — garante consistência entre temp_c do slot e obs_min.
+    slots: list[dict] = []
+    for k in sorted(series.keys(), key=lambda x: x[0] * 60 + x[1]):
+        h, s30 = k
+        obs_h, obs_m = obs_min.get(k, (h, s30 * 30))
+        r = next((row for row in rows if floor_slot(row["hour"], row["minute"]) == k), None)
+        base = r if r else {"cloud_cover": 50, "humidity": 70, "source": "Open-Meteo",
+                            "dewpoint_c": 0, "pressure_hpa": 1013.0,
+                            "wind_dir_deg": 0.0, "wind_speed_kmh": 5.0,
+                            "wind_gust_kmh": 8.0, "uv_index": 3.0}
+        slots.append({
+            "date":           today,
+            "hour":           h,
+            "slot30":         s30,
+            "temp_c":         series[k],
+            "cloud_cover":    base.get("cloud_cover",    50),
+            "humidity":       base.get("humidity",       70),
+            "source":         "Open-Meteo",
+            "dewpoint_c":     base.get("dewpoint_c",     series[k] - 10),
+            "pressure_hpa":   base.get("pressure_hpa",   1013.0),
+            "wind_dir_deg":   base.get("wind_dir_deg",   0.0),
+            "wind_speed_kmh": base.get("wind_speed_kmh", 5.0),
+            "wind_gust_kmh":  base.get("wind_gust_kmh",  8.0),
+            "uv_index":       base.get("uv_index",       3.0),
+        })
     return series, slots
 
 
