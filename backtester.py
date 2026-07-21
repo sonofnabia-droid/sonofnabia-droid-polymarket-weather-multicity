@@ -638,7 +638,7 @@ def run_backtest(
                         # SingleEntry.evaluate() para garantir consistencia
                         # (antes o backtester recalculava localmente com logica
                         # diferente que nao tratava caudas "or higher/lower").
-                        best = select_target_bracket(brackets, running_max) if brackets else None
+                        best = select_target_bracket(market_sim, running_max) if market_sim else None
                         if best is None:
                             # Fallback final: bracket mais próximo (sem tratamento de cauda)
                             best = min(

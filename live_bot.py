@@ -23,9 +23,13 @@ from cities.config import CityConfig, get_city, CITIES
 from predictor import set_city, load_models, predict_ensemble, compute_prev7, init_history_max
 from backtester import _compute_realized_pnl, TAKER_FEE_RATE
 from weather import (
-    make_wu_session, make_om_session, fetch_wu_latest,
-    fetch_wu_forecast_max, fetch_om_forecast_max, fetch_om_hourly_today,
-    bootstrap_today, bootstrap_om_today, ceil_slot, floor_slot, is_plausible_temp,
+    make_wu_session, fetch_wu_latest,
+    fetch_wu_forecast_max,
+    bootstrap_today, ceil_slot, floor_slot, is_plausible_temp,
+)
+from weather_v3 import (
+    v3_fetch_current, v3_fetch_forecast_daily, v3_fetch_forecast_hourly,
+    v3_bootstrap_today,
 )
 from modules.strategy_factory import create_strategy
 from polymarket_clob import ClobClient, TradingMode, GAMMA_API, PositionStatus, round_to_tick
@@ -57,7 +61,55 @@ C = {
 }
 
 LOG_DIR = Path("live_bot_logs")
+_TG_TRADING_MODE: str = "paper"  # Module-level trading mode for Telegram token selection
 LOG_DIR.mkdir(exist_ok=True)
+
+
+# ── FIX: usar PWS do config; só fallback para ICAO se não houver PWS ──
+def _city_with_icao_station(city):
+    """Retorna cópia da city garantindo pws_station_id válido.
+
+    Prioridade:
+    1. pws_station_id do config (se existir e não estiver vazio)
+    2. icao como fallback (se a API key suportar estações oficiais)
+    3. cidade original se nenhum dos dois existir
+    """
+    # Se já tem PWS definido no config, usa-o diretamente
+    if getattr(city, 'pws_station_id', None) and city.pws_station_id:
+        return city
+
+    # Se não tem PWS mas tem ICAO, tenta usar ICAO como fallback
+    if not city.icao:
+        return city
+
+    # Criar shallow copy e substituir pws_station_id pelo ICAO
+    city_icao = city.__class__(
+        name=city.name,
+        icao=city.icao,
+        timezone=city.timezone,
+        latitude=city.latitude,
+        longitude=city.longitude,
+        polymarket_slug_pfx=city.polymarket_slug_pfx,
+        wu_history_path=city.wu_history_path,
+        csv_path=city.csv_path,
+        model_dir=city.model_dir,
+        unit=city.unit,
+        temp_range=city.temp_range,
+        max_daily_loss=city.max_daily_loss,
+        max_per_trade=city.max_per_trade,
+        extra_features=city.extra_features,
+        threshold=city.threshold,
+        hour_min=city.hour_min,
+        pws_station_id=city.icao,  # ← Fallback para ICAO
+        market_unit=city.market_unit,
+        day_start=city.day_start,
+        day_end=city.day_end,
+        bot_timezone=city.bot_timezone,
+        climatology=city.climatology,
+    )
+    return city_icao
+
+
 
 PARCEL_SIZE = 5.0
 
@@ -143,6 +195,7 @@ class PolymarketFetcher:
         )
 
         if not events:
+            print(f"  {C['yellow']}  [DEBUG] {self.city.name}: NENHUM evento encontrado na API para {d} (slug={slug}){R}")
             return None
 
         # Filtrar eventos relevantes (contendo nome da cidade e temperatura)
@@ -161,6 +214,7 @@ class PolymarketFetcher:
 
         relevant = [e for e in events if isinstance(e, dict) and is_relevant(e)]
         if not relevant:
+            print(f"  {C['yellow']}  [DEBUG] {self.city.name}: Eventos encontrados, mas nenhum relevante para temp/cidade.{R}")
             return None
 
         event = max(relevant, key=lambda e: float(e.get("volume", 0) or 0))
@@ -210,6 +264,7 @@ class PolymarketFetcher:
             })
 
         if not brackets:
+            print(f"  {C['yellow']}  [DEBUG] {self.city.name}: Evento relevante encontrado, mas sem brackets válidos.{R}")
             return None
 
         brackets.sort(key=lambda b: b["temp_lo"])
@@ -334,13 +389,13 @@ class CityState:
     fetcher: PolymarketFetcher | None = None
     wu_key: str = ""
     wu_sess: any = None
-    om_sess: any = None
+    # ── REMOVIDO: om_sess (Open-Meteo removido)
     clob: ClobClient | None = None
     trading_mode: TradingMode = TradingMode.PAPER
     latest_obs: dict | None = None
     last_forecast_hour: int = -1
     last_wu_forecast_max: int | None = None
-    last_om_forecast_max: int | None = None
+    # ── REMOVIDO: last_om_forecast_max (Open-Meteo removido)
     last_market_min: tuple[int, int] | None = None
     daily_stats: DailyStats = None  # ← NOVO
     last_p_ensemble: float = 0.0
@@ -436,22 +491,37 @@ def _bootstrap_state_today(state: CityState) -> None:
     limit_h, limit_s = floor_slot(now_city.hour, now_city.minute)
     limit_idx = limit_h * 60 + limit_s
 
-    try:
-        if city.wu_history_path:
-            series, slots = bootstrap_today(
-                city, state.wu_key, state.wu_sess, verbose=not state.dashboard_enabled
-            )
-            # SEM FALLBACK — se WU falhou, slots fica vazio
-            if len(slots) < 4:
-                print(f"  {C['yellow']}{city.name}: WU devolveu {len(slots)} slots "
-                      f"(< 4) — ver mensagens [WU] acima{R}")
-        else:
-            # Cidade sem WU history path — sem dados em modo WU-only
-            print(f"  {C['yellow']}{city.name}: sem WU history path — sem dados{R}")
-            series, slots = {}, []
-    except Exception as e:
-        print(f"  {C['red']}{city.name}: bootstrap WU falhou: {e}{R}")
-        series, slots = {}, []
+    # ── NOVO: Tentar V3 ICAO primeiro ──
+    series, slots = {}, []
+
+    if city.icao and state.wu_key:
+        try:
+            series, slots = v3_bootstrap_today(city.icao, state.wu_key)
+            if len(slots) >= 4:
+                print(f"  {C['green']}{city.name}: V3 ICAO bootstrap OK ({len(slots)} slots){R}")
+            else:
+                print(f"  {C['yellow']}{city.name}: V3 ICAO devolveu {len(slots)} slots — tentando V2 PWS{R}")
+                # Fallback para V2 PWS
+                if city.wu_history_path and city.pws_station_id:
+                    city_wu = _city_with_icao_station(city)
+                    series, slots = bootstrap_today(
+                        city_wu, state.wu_key, state.wu_sess, verbose=not state.dashboard_enabled
+                    )
+        except Exception as e:
+            print(f"  {C['yellow']}{city.name}: V3 ICAO falhou: {e} — tentando V2 PWS{R}")
+            # Fallback para V2 PWS
+            if city.wu_history_path and city.pws_station_id:
+                try:
+                    city_wu = _city_with_icao_station(city)
+                    series, slots = bootstrap_today(
+                        city_wu, state.wu_key, state.wu_sess, verbose=not state.dashboard_enabled
+                    )
+                except Exception as e2:
+                    print(f"  {C['red']}{city.name}: V2 PWS também falhou: {e2}{R}")
+
+    # Se ainda não temos slots suficientes, avisar
+    if len(slots) < 4:
+        print(f"  {C['red']}{city.name}: SEM DADOS — V3 ICAO e V2 PWS falharam ({len(slots)} slots){R}")
 
     filtered_slots = [
         s for s in slots
@@ -543,15 +613,29 @@ def _settle_paper_positions_for_day(state: CityState, city_today: date) -> float
     return settled_pnl
 
 
-def _get_tg():
-    """Singleton lazy de tg.TG() — None se Telegram não configurado."""
-    if not hasattr(_get_tg, "_instance"):
+def _get_tg(trading_mode: str = None):
+    """Singleton lazy de tg.TG() — None se Telegram não configurado.
+
+    Args:
+        trading_mode: "paper" ou "real". Se None, usa _TG_TRADING_MODE.
+    """
+    mode = (trading_mode or _TG_TRADING_MODE).lower()
+    cache_key = f"_instance_{mode}"
+    if not hasattr(_get_tg, cache_key):
         try:
+            import os
             from tg import TG
-            _get_tg._instance = TG()
+            # Selecionar token baseado no modo de trading
+            if mode == "real":
+                token = os.environ.get("TELEGRAM_TOKEN_REAL", os.environ.get("TELEGRAM_TOKEN", ""))
+            else:
+                token = os.environ.get("TELEGRAM_TOKEN_PAPER", os.environ.get("TELEGRAM_TOKEN", ""))
+            if token:
+                os.environ["TELEGRAM_TOKEN"] = token
+            setattr(_get_tg, cache_key, TG())
         except Exception:
-            _get_tg._instance = None
-    return _get_tg._instance
+            setattr(_get_tg, cache_key, None)
+    return getattr(_get_tg, cache_key)
 
 
 def _tg_thread(fn, *args, **kwargs) -> None:
@@ -706,7 +790,7 @@ def _build_ascii_chart(slots: list, width: int = 28, height: int = 6) -> list:
 
 
 def _send_single_city_dashboard(tg_inst, states, city_name, daily_stats,
-                                 run_mode, bankroll) -> None:
+                                 run_mode, bankroll, session_stats=None) -> None:
     """
     Constrói e envia um dashboard completo para uma única cidade via Telegram.
     Inclui: curva de temperatura ASCII, P(pico), tabela de brackets, forecast,
@@ -743,13 +827,13 @@ def _send_single_city_dashboard(tg_inst, states, city_name, daily_stats,
     if state.last_wu_forecast_max is not None:
         forecast_max = {"temp_max": int(state.last_wu_forecast_max)}
 
-    om_forecast = None
-    if state.last_om_forecast_max is not None:
-        om_forecast = {"temp_max": int(state.last_om_forecast_max)}
+    # ── REMOVIDO: om_forecast (Open-Meteo removido)
+    # ── REMOVIDO: om_forecast block (Open-Meteo removido)
+
 
     # forecast agreement (no formato esperado por tg.dashboard)
     wu = state.last_wu_forecast_max
-    om = state.last_om_forecast_max
+    om = None  # ── REMOVIDO: Open-Meteo removido
     forecast_agreement = None
     if wu is not None and om is not None:
         forecast_agreement = {
@@ -828,7 +912,7 @@ def _send_single_city_dashboard(tg_inst, states, city_name, daily_stats,
             rmax_time=rmax_time,
             temp_now=temp_now,
             forecast_max=forecast_max,
-            om_forecast=om_forecast,
+    # ── REMOVIDO: om_forecast param (Open-Meteo removido)
             forecast_agreement=forecast_agreement,
             market=state.market,
             bracket=state.last_target_bracket,
@@ -866,6 +950,9 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     # Reset diário (Fix 11) + FIX 2: guardar stats anterior antes de resetar
     if state._last_date is None:
         state._last_date = city_today
+    # FIX CRITICAL: settlement of previous day positions on startup
+    # The old code set _last_date = city_today BEFORE this check, making it always false
+    # Now we check FIRST, then update _last_date after settlement
     if city_today != state._last_date:
         # FIX Bug 4.13: settlement do dia anterior ANTES de resetar o estado.
         # Anteriormente o settlement só acontecia se city_h_now > day_end,
@@ -923,16 +1010,29 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
     # Fetch WU (única fonte — sem fallback OM)
     new_obs = None
-    if city.wu_history_path:
+    # ── NOVO: Tentar V3 ICAO current primeiro ──
+    new_obs = None
+    if city.icao and state.wu_key:
         try:
-            new_obs = fetch_wu_latest(city, state.wu_key, state.wu_sess)
+            new_obs = v3_fetch_current(city.icao, state.wu_key)
+            if new_obs:
+                print(f"  {C['green']}{city.name}: V3 ICAO current OK ({new_obs['temp_c']}°C){R}")
+            else:
+                print(f"  {C['yellow']}{city.name}: V3 ICAO current retornou None (ICAO={city.icao}){R}")
         except Exception as e:
-            print(f"  {C['yellow']}WU fetch failed: {e}{R}")
-        # fetch_wu_latest retorna None quando falha — fetch_wu_day já imprimiu a causa real
-        if new_obs is None:
-            # Não vamos a OM — avisar se WU falhou silenciosamente
-            # (Mensagem só 1x por tick, para não spammar)
-            pass  # prints já foram feitos dentro de fetch_wu_day
+            print(f"  {C['yellow']}{city.name}: V3 ICAO current falhou: {e} (ICAO={city.icao}){R}")
+
+    # Fallback para V2 PWS se V3 falhar
+    if new_obs is None and city.wu_history_path and city.pws_station_id:
+        try:
+            city_wu = _city_with_icao_station(city)
+            new_obs = fetch_wu_latest(city_wu, state.wu_key, state.wu_sess)
+        except Exception as e:
+            print(f"  {C['yellow']}WU V2 fetch failed: {e}{R}")
+
+    # Sem mais fallbacks — V3 ICAO e V2 PWS são as únicas fontes
+    if new_obs is None:
+        print(f"  {C['red']}{city.name}: SEM DADOS ATUAIS — V3 ICAO e V2 PWS falharam{R}")
 
     state.latest_obs = new_obs
     if new_obs and not is_plausible_temp(new_obs.get("temp_c"), city):
@@ -947,17 +1047,25 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     h_forecast = city_now(city).hour
     if state.last_forecast_hour != h_forecast:
         try:
-            wu_forecast = (
-                fetch_wu_forecast_max(city, state.wu_key, state.wu_sess)
-                if city.wu_history_path else None
-            )
-            om_forecast = fetch_om_forecast_max(city, state.om_sess)
+            # ── NOVO: V3 ICAO forecast primeiro ──
+            wu_forecast = None
+            if city.icao and state.wu_key:
+                wu_forecast = v3_fetch_forecast_daily(city.icao, state.wu_key)
+                if wu_forecast:
+                    print(f"  {C['green']}{city.name}: V3 ICAO forecast OK (max={wu_forecast.get('temp_max')}°C){R}")
+
+            # Fallback V2 PWS
+            if wu_forecast is None and city.wu_history_path and city.pws_station_id:
+                city_wu = _city_with_icao_station(city)
+                wu_forecast = fetch_wu_forecast_max(city_wu, state.wu_key, state.wu_sess)
+
+            # ── REMOVIDO: fetch_om_forecast_max (Open-Meteo removido)
             state.last_wu_forecast_max = (
                 wu_forecast.get("temp_max") if isinstance(wu_forecast, dict) else None
             )
-            state.last_om_forecast_max = (
-                om_forecast.get("temp_max") if isinstance(om_forecast, dict) else None
-            )
+            # ── REMOVIDO: last_om_forecast_max (Open-Meteo removido)
+
+
             state.last_forecast_hour = h_forecast
         except Exception as e:
             print(f"  {C['yellow']}{city.name}: Forecast fetch failed: {e}{R}")
@@ -1062,31 +1170,39 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
     if state.last_market_min != market_key or state.market is None:
         try:
             _market = state.fetcher.fetch_market(city_today)
-            if _market and state.clob:
-                running_max_ref = (
-                    max((s["temp_c"] for s in state.slots_so_far), default=15.0)
-                    if state.slots_so_far
-                    else (state.latest_obs.get("temp_c", 15.0) if state.latest_obs else 15.0)
-                )
-                rmax_floor = int(math.floor(running_max_ref))
-                enriched_brackets = []
-                for b in _market["brackets"]:
-                    mid_temp = (float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2.0
-                    if (
-                        abs(mid_temp - rmax_floor) <= 3.0
-                        or float(b.get("temp_lo", 0.0)) <= -99.0
-                        or float(b.get("temp_hi", 0.0)) >= 99.0
-                    ):
-                        enriched_brackets.append(state.clob.enrich_bracket(b))
-                    else:
-                        enriched_brackets.append(b)
-                _market["brackets"] = enriched_brackets
-            # Escrita protegida contra a thread do Telegram
-            with state._lock:
-                state.market = _market
-                state.last_market_min = market_key
+            if _market:
+                print(f"  {C['green']}{city.name}: Mercado OK "
+                      f"({len(_market.get('brackets', []))} brackets, "
+                      f"vol=${_market.get('volume', 0):,.0f}){R}")
+                if state.clob:
+                    running_max_ref = (
+                        max((s["temp_c"] for s in state.slots_so_far), default=15.0)
+                        if state.slots_so_far
+                        else (state.latest_obs.get("temp_c", 15.0) if state.latest_obs else 15.0)
+                    )
+                    rmax_floor = int(math.floor(running_max_ref))
+                    enriched_brackets = []
+                    for b in _market["brackets"]:
+                        mid_temp = (float(b.get("temp_lo", 0.0)) + float(b.get("temp_hi", 0.0))) / 2.0
+                        if (
+                            abs(mid_temp - rmax_floor) <= 3.0
+                            or float(b.get("temp_lo", 0.0)) <= -99.0
+                            or float(b.get("temp_hi", 0.0)) >= 99.0
+                        ):
+                            enriched_brackets.append(state.clob.enrich_bracket(b))
+                        else:
+                            enriched_brackets.append(b)
+                    _market["brackets"] = enriched_brackets
+                # Escrita protegida contra a thread do Telegram
+                with state._lock:
+                    state.market = _market
+                    state.last_market_min = market_key
+            else:
+                print(f"  {C['yellow']}{city.name}: Mercado NÃO ENCONTRADO "
+                      f"para {city_today} (slug={state.fetcher.date_to_slug(city_today)}){R}")
+                # Se _market é None, mantém o market anterior (não sobrescreve)
         except Exception as e:
-            print(f"  {C['yellow']}{city.name}: Fetch market failed: {e}{R}")
+            print(f"  {C['red']}{city.name}: Fetch market failed: {e}{R}")
 
     # ── Anti-duplicado: verificar DUAS fontes ──
     # FIX Bug 4.1: todo o bloco anti-duplicado dentro do lock para
@@ -1154,13 +1270,15 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
             if _skip and _rec and state.entry:
                 if hasattr(state.entry, "restore"):
                     state.entry.restore(_rec, state.strategy_mode)
+                    print(f"  {C['green']}{city.name}: Posição restaurada via restore() "
+                          f"— bracket={_rec.get('bracket','?')} @ {_rec.get('ask',0)*100:.1f}¢{R}")
                 else:
                     state.entry.bought = True
                     state.entry.record = _rec
                     if hasattr(state.entry, 'strategy_used'):
                         state.entry.strategy_used = _rec.get("strategy") or state.strategy_mode
-                print(f"  {C['yellow']}{city.name}: Posição existente detectada "
-                      f"— a saltar entrada{R}")
+                    print(f"  {C['yellow']}{city.name}: Posição restaurada (fallback) "
+                          f"— bracket={_rec.get('bracket','?')} @ {_rec.get('ask',0)*100:.1f}¢{R}")
 
                 # Verificar se stop-loss já foi disparado antes do restart
                 if state.slots_so_far and state.entry.record:
@@ -1246,7 +1364,7 @@ def _tick_city(state: CityState, trading_mode_str: str, bankroll: float) -> Dail
 
         # Usar forecasts WU+OM reais para agreement (logging/telemetria, não bloqueia compra)
         wu = state.last_wu_forecast_max
-        om = state.last_om_forecast_max
+        om = None  # ── REMOVIDO: Open-Meteo removido
         if wu is not None and om is not None:
             diff = abs(wu - om)
             fc_agreement = {
@@ -1638,8 +1756,8 @@ def main():
                         help="Desativa dashboard rich (útil para logs/daemon)")
     parser.add_argument("--force-dashboard", action="store_true",
                         help="Força dashboard rich mesmo se stdout não parecer TTY")
-    parser.add_argument("--wu-only", action="store_true",
-                        help="Para cidades com WU, não usa fallback Open-Meteo")
+    # ── REMOVIDO: --wu-only (Open-Meteo removido)
+
     # ── NOVOS: controlo de trade frequency e dashboard periódico ──
     parser.add_argument("--tg-interval", type=int, default=1800,
                         help="Intervalo em segundos para dashboard Telegram periódico "
@@ -1677,6 +1795,8 @@ def main():
         # Evita cidades duplicadas (ex: "...,karachi,...,karachi") mantendo ordem.
         city_names = list(dict.fromkeys(raw_city_names))
     trading_mode = TradingMode.REAL if args.run == "real" else TradingMode.PAPER
+    global _TG_TRADING_MODE
+    _TG_TRADING_MODE = args.run.lower()  # "paper" ou "real"
     is_multi     = len(city_names) > 1
     has_tty = sys.stdout.isatty()
     dashboard_enabled = is_multi and (not args.no_dashboard)
@@ -1731,8 +1851,20 @@ def main():
             f"hour_min={getattr(entry, 'hour_min', 'n/a')})"
         )
 
-        # Carregar estado PAPER persistido (se existir)
-        paper_state = _load_paper_state(city.name)
+        # ── FIX 5: restaurar daily_stats do disco ──
+        stats_path = LOG_DIR / f"{city.name}_{city_date(city)}.json"
+        restored_stats = DailyStats(date=city_date(city))
+        if stats_path.exists():
+            try:
+                saved = json.loads(stats_path.read_text())
+                restored_stats.daily_pnl = saved.get("daily_pnl", 0.0)
+                restored_stats.total_invested = saved.get("total_invested", 0.0)
+                restored_stats.stop_losses_triggered = saved.get("stop_losses_triggered", 0)
+                print(f"  {C['cyan']}{city.name}: daily_stats restaurado "
+                      f"(PnL={restored_stats.daily_pnl:+.2f}$, "
+                      f"stops={restored_stats.stop_losses_triggered}){R}")
+            except Exception:
+                pass
 
         state = CityState(
             city=city,
@@ -1741,14 +1873,47 @@ def main():
             entry=entry,
             fetcher=PolymarketFetcher(city),
             history_max=init_history_max(city_name),  # ← carregar do disco
-            daily_stats=DailyStats(date=city_date(city)),  # ← NOVO
+            daily_stats=restored_stats,  # ← Alterado para usar o restaurado
             dashboard_enabled=dashboard_enabled,
             threshold_override=args.threshold_override,  # ← FIX 1
         )
 
         # Restaurar _last_applied_pnl do disco (para bankroll PAPER consistente após restart)
+        paper_state = _load_paper_state(city.name)
         state._last_applied_pnl = paper_state.get("_last_applied_pnl", 0.0)
-        state.wu_only = bool(args.wu_only)
+    # ── REMOVIDO: wu_only (Open-Meteo removido)
+
+        # ── NOVO: restaurar posição existente antes do primeiro tick ──
+        bets_path = LOG_DIR / f"bets_{city.name}_{city_date(city)}.json"
+        if bets_path.exists():
+            try:
+                existing_bets = json.loads(bets_path.read_text())
+                current_slug = state.fetcher.date_to_slug(city_date(city))
+                matching = [b for b in existing_bets if b.get("market_slug") == current_slug]
+                if matching and state.entry:
+                    first = matching[-1]
+                    _rec = {
+                        "ask": first.get("ask"),
+                        "bracket": first.get("bracket") or first.get("bracket_label"),
+                        "bracket_label": first.get("bracket_label") or first.get("bracket"),
+                        "token_id": first.get("token_id"),
+                        "size_usdc": first.get("bet_size") or first.get("size_usdc"),
+                        "temp_hi": first.get("temp_hi"),
+                        "temp_lo": first.get("temp_lo"),
+                        "market_slug": first.get("market_slug", current_slug),
+                        "strategy": first.get("strategy"),
+                        "shares": first.get("shares"),
+                        "p_ensemble": first.get("p_ensemble"),
+                    }
+                    if hasattr(state.entry, "restore"):
+                        state.entry.restore(_rec, args.mode)
+                    else:
+                        state.entry.bought = True
+                        state.entry.record = _rec
+                    print(f"  {C['green']}{city.name}: Posição restaurada na init "
+                          f"— {_rec.get('bracket','?')} @ {_rec.get('ask',0)*100:.1f}¢{R}")
+            except Exception as e:
+                print(f"  {C['yellow']}{city.name}: Restore init falhou: {e}{R}")
 
         # ── NOVO: configurar filtros no state ──
         state.max_buy_ask = float(args.max_buy_ask)
@@ -1759,11 +1924,11 @@ def main():
 
         if city.wu_history_path and not state.wu_key:
             print(f"  {C['yellow']}{city.name}: WU_API_KEY não definida, usando apenas OM{R}")
-        if city.wu_history_path and state.wu_only:
+    # ── REMOVIDO: wu_only (Open-Meteo removido)
             print(f"  {C['cyan']}{city.name}: WU-only ativo (sem fallback OM){R}")
 
         state.wu_sess = make_wu_session()
-        state.om_sess = make_om_session()
+        # ── REMOVIDO: state.om_sess = make_om_session() (Open-Meteo removido)
         _bootstrap_state_today(state)
 
         private_key = ""
@@ -1844,7 +2009,7 @@ def main():
     )
 
     # Daily stats por cidade — para passar ao dashboard                          # ← NOVO
-    daily_stats: dict = {cn: None for cn in city_names}                         # ← NOVO
+    daily_stats: dict = {cn: states[cn].daily_stats for cn in city_names}        # ← NOVO
     session_pnl_cumulative = {cn: 0.0 for cn in city_names}
     session_last_reported_pnl = {cn: 0.0 for cn in city_names}
     session_last_dates = {cn: None for cn in city_names}
@@ -1855,6 +2020,19 @@ def main():
     _tg_last_race_eval = 0.0  # Throttle para race phase (Top-K selection)
 
     if is_multi:
+        # ── FIX 1: tick inicial de todas as cidades antes do primeiro render ──
+        print(f"  {C['cyan']}Tick inicial antes do dashboard...{R}")
+        for city_name in city_names:
+            state = states[city_name]
+            city_h_now = city_now(state.city).hour
+            if not (state.city.day_start <= city_h_now <= state.city.day_end):
+                continue
+            try:
+                stats = _tick_city(state, args.run, city_bankrolls.get(city_name, default_bankroll))
+                daily_stats[city_name] = stats
+            except Exception as e:
+                print(f"  {C['red']}{city_name}: tick inicial falhou: {e}{R}")
+        
         try:
             initial_display = []
             for cn in city_names:
@@ -1883,6 +2061,24 @@ def main():
         except Exception as e:
             print(f"  {C['red']}Dashboard/snapshot init error: {e}{R}")
 
+    # FIX: Settle any pending paper positions from previous days on startup
+    # This handles the case where the bot was stopped overnight and restarted
+    for city_name in city_names:
+        state = states[city_name]
+        city = state.city
+        city_today = city_date(city)
+        if trading_mode_str == "paper" and state.clob:
+            try:
+                # Check for positions from yesterday and before
+                settled_pnl = _settle_paper_positions_for_day(state, city_today)
+                if settled_pnl:
+                    print(f"  {C['green']}{city.name}: Startup settlement PnL={settled_pnl:+.2f}${R}")
+                    if hasattr(state, 'daily_stats') and state.daily_stats:
+                        state.daily_stats.daily_pnl += settled_pnl
+                        _save_daily_stats(state.daily_stats, city.name)
+            except Exception as e:
+                print(f"  {C['yellow']}{city.name}: Startup settlement failed: {e}{R}")
+
     try:
         while True:
             now = bot_now()
@@ -1907,6 +2103,58 @@ def main():
                                 )
                                 session_last_dates[city_name] = stats.date
                                 session_stats["total_pnl"] = sum(session_pnl_cumulative.values())
+
+                            # ── NOVO: notificar no Telegram quando posição resolve ──
+                            tg_notify = _get_tg()
+                            if tg_notify and state.entry and getattr(state.entry, 'bought', False):
+                                rec = getattr(state.entry, 'record', None) or {}
+                                try:
+                                    # Determinar se ganhou ou perdeu
+                                    peak_temp = None
+                                    if state.slots_so_far:
+                                        valid = [s for s in state.slots_so_far if s.get("temp_c") is not None]
+                                        if valid:
+                                            peak_slot = max(valid, key=lambda s: float(s["temp_c"]))
+                                            peak_temp = float(peak_slot["temp_c"])
+
+                                    if peak_temp is not None and state.market:
+                                        # Verificar se o bracket ganhou
+                                        bracket_won = False
+                                        for b in state.market.get("brackets", []):
+                                            lo = float(b.get("temp_lo", -99))
+                                            hi = float(b.get("temp_hi", 99))
+                                            if hi >= 99:
+                                                contains = peak_temp >= lo
+                                            elif lo <= -99:
+                                                contains = peak_temp <= hi
+                                            else:
+                                                contains = lo <= peak_temp < (hi + 1.0)
+                                            if contains:
+                                                buy_label = rec.get("bracket_label") or rec.get("bracket")
+                                                if buy_label and b.get("label") == buy_label:
+                                                    bracket_won = True
+                                                break
+
+                                        # Criar posição fictícia para o alerta
+                                        pos_info = {
+                                            "bracket_label": rec.get("bracket_label") or rec.get("bracket", "?"),
+                                            "entry_ask": rec.get("ask", 0),
+                                            "shares": rec.get("shares", 0),
+                                            "size_usdc": rec.get("size_usdc", 0),
+                                            "date_opened": str(city_today),
+                                            "pnl_usd": settled_pnl,
+                                            "pnl_pct": (settled_pnl / rec.get("size_usdc", 1) * 100) if rec.get("size_usdc") else 0,
+                                        }
+
+                                        # Enviar notificação apropriada
+                                        if bracket_won:
+                                            pos_info["status"] = type("Status", (), {"value": "won"})()
+                                            _tg_thread(tg_notify.alert_position_resolved, pos_info)
+                                        else:
+                                            pos_info["status"] = type("Status", (), {"value": "lost"})()
+                                            _tg_thread(tg_notify.alert_position_resolved, pos_info)
+                                except Exception as e:
+                                    print(f"  [TG] Notificação de resolução falhou: {e}")
 
                             # ── NOVO: registar outcome no tick_logger ──
                             if _TICK_LOGGER is not None:
@@ -2258,12 +2506,16 @@ def main():
                                     "temp_now": temp_now,
                                     "running_max": rmax,
                                     "local_hhmm": local_hhmm,
+                                    "daily_pnl": pnl,
+                                    "daily_trades": len(getattr(states[cn].daily_stats, "trades", [])) if states[cn].daily_stats else 0,
                                 })
                             
                             tg_inst.alert_multi_city_summary(
                                 mode_str=args.run.upper(),
                                 total_pnl=session_stats["total_pnl"],
                                 n_trades=session_stats["total_trades"],
+                                session_pnl=session_stats["total_pnl"],
+                                session_trades=session_stats["total_trades"],
                                 cities_data=cities_data
                             )
                         _tg_last_dashboard = now_ts
@@ -2282,6 +2534,7 @@ def main():
                                 tg_inst, states, city_names[0],
                                 daily_stats, args.run,
                                 city_bankrolls.get(city_names[0], default_bankroll),
+                                session_stats=session_stats,
                             )
                         except Exception as e:
                             print(f"  {C['yellow']}Single-city TG dashboard error: {e}{R}")

@@ -1,0 +1,36 @@
+(venv) marco@CASSIOPEIA:~/POLY-MULTI-CITY$ python backtester_all.py --start 2010-01-01
+Backtest All — 36 cidades Celsius
+  Período : 2010-01-01 → 2026-07-18
+  Ordertype: fixed  |  Bet: 5.0  |  Noise: 0.08
+
+ ✓ [amsterdam] LightGBM AUC=0.9435 features=25 threshold=não disponível prior=sim [LightGBM puro]
+amsterdam ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   0% 0:00:03 -:--:--    ✓ 192,436 slots  6037 dias
+Processando... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   0% 0:00:00 0:00:38
+  amsterdam      ✗ SingleEntry._select_target_bracket() missing 1 required positional argument: 'running_max'
+ ✓ [helsinki] LightGBM AUC=0.9261 features=25 threshold=não disponível prior=sim [LightGBM puro]
+helsinki ━╺━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   3% 0:00:07 -:--:--    ✓ 192,534 slots  6037 dias
+Processando... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   1% 0:00:00 0:00:37
+  helsinki       ✗ SingleEntry._select_target_bracket() missing 1 required positional argument: 'running_max'
+ ✓ [istanbul] LightGBM AUC=0.9513 features=25 threshold=não disponível prior=sim [LightGBM puro]
+istanbul ━━╺━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   6% 0:00:10 0:02:03    ✓ 192,385 slots  6040 dias
+Processando... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   0% 0:00:00 0:00:57
+  istanbul       ✗ SingleEntry._select_target_bracket() missing 1 required positional argument: 'running_max'
+ ✓ [london] LightGBM AUC=0.9405 features=25 threshold=não disponível prior=sim [LightGBM puro]
+london ━━━╺━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   8% 0:00:13 0:01:58
+Traceback (most recent call last):
+  File "/home/marco/POLY-MULTI-CITY/backtester_all.py", line 632, in <module>
+    main()
+  File "/home/marco/POLY-MULTI-CITY/backtester_all.py", line 604, in main
+    result = run_single_city(
+             ^^^^^^^^^^^^^^^^
+  File "/home/marco/POLY-MULTI-CITY/backtester_all.py", line 106, in run_single_city
+    df_all = load_data(Path(city.csv_path), city)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/marco/POLY-MULTI-CITY/backtester.py", line 351, in load_data
+    raw["doy"] = [d.timetuple().tm_yday for d in dt_locals]
+                  ^^^^^^^^^^^^^
+KeyboardInterrupt
+
+(venv) marco@CASSIOPEIA:~/POLY-MULTI-CITY$ 
+
+

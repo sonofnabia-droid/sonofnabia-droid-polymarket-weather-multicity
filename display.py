@@ -21,6 +21,7 @@ Integração com live_bot.py (no fim do loop principal):
 """
 
 import json
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, date
@@ -93,8 +94,8 @@ class CityDisplayData:
     p_lgbm:          Optional[float]  = None   # componente LGBM
     slots_so_far:    list             = field(default_factory=list)
     wu_forecast:     Optional[int]    = None   # previsão WU (°C inteiro)
-    om_forecast:     Optional[int]    = None   # previsão Open-Meteo
-    forecast_agree:  Optional[bool]   = None   # True se WU e OM concordam
+    # om_forecast removido — Open-Meteo descontinuado
+    forecast_agree:  Optional[bool]   = None   # N/A — Open-Meteo removido
     market:          Optional[dict]   = None   # dict do Polymarket
     target_bracket:  Optional[dict]   = None   # bracket alvo (com ask, bid, label)
     bought:          bool             = False
@@ -129,6 +130,12 @@ def extract_display_data(state, daily_stats=None, bankroll: float = 500.0) -> "C
         temp  = state.latest_obs.get("temp_c")
         hum   = state.latest_obs.get("humidity")
         cloud = state.latest_obs.get("cloud_cover")
+    # Fallback: usar último slot se latest_obs falhar
+    if temp is None and state.slots_so_far:
+        last_slot = state.slots_so_far[-1]
+        temp = last_slot.get("temp_c")
+        hum = last_slot.get("humidity")
+        cloud = last_slot.get("cloud_cover")
 
     rmax = None
     if state.slots_so_far:
@@ -173,11 +180,9 @@ def extract_display_data(state, daily_stats=None, bankroll: float = 500.0) -> "C
         except Exception:
             pass
 
-    # Forecast agreement
-    wu  = state.last_wu_forecast_max
-    om  = state.last_om_forecast_max
-    # Fix 13: usar "is not None" para não tratar 0°C como ausente
-    agree = (abs(wu - om) <= 1) if (wu is not None and om is not None) else None
+    # Forecast — apenas WU (Open-Meteo removido)
+    wu  = getattr(state, 'last_wu_forecast_max', None)
+    agree = None  # Open-Meteo removido — agreement não aplicável
 
     return CityDisplayData(
         city           = city,
@@ -185,7 +190,7 @@ def extract_display_data(state, daily_stats=None, bankroll: float = 500.0) -> "C
         running_max    = rmax,
         slots_so_far   = list(state.slots_so_far),
         wu_forecast    = wu,
-        om_forecast    = om,
+        # om_forecast removido — Open-Meteo descontinuado
         forecast_agree = agree,
         market         = state.market,
         bought         = bought,
@@ -410,23 +415,13 @@ def _city_panel(cd: "CityDisplayData") -> Panel:
     t.append_text(_p_bar(p, width=22))
     t.append(f"  thr={thr:.2f}\n", style="dim")
 
-    # ── Forecasts WU + OM
-    wu, om = cd.wu_forecast, cd.om_forecast
-    if wu is not None or om is not None:
+    # ── Forecast WU (Open-Meteo removido) ──
+    wu = cd.wu_forecast
+    if wu is not None:
         t.append("\n FC  ", style="dim")
         if wu is not None:
             t.append(f"WU:{wu}°", style="bold blue")
-        if wu is not None and om is not None:
             t.append("   ")
-        if om is not None:
-            t.append(f"OM:{om}°", style="bold cyan")
-        # Fix 13: usar "is not None" para não tratar 0°C como ausente
-        if wu is not None and om is not None:
-            if cd.forecast_agree:
-                t.append("  ✅ concordam", style="dim green")
-            else:
-                t.append(f"  ⚠ diff={abs(wu - om)}°", style="yellow")
-        t.append("\n")
 
     # ── Mercado Polymarket
     t.append("\n")
@@ -571,7 +566,7 @@ def _summary_table(city_data: list["CityDisplayData"]) -> Table:
     tbl.add_column("Temp",        justify="right",       width=7)
     tbl.add_column("RMax",        justify="right",       width=7)
     tbl.add_column("P(pico)",     justify="left",        width=24)
-    tbl.add_column("FC WU/OM",    justify="center",      width=14)
+    tbl.add_column("FC WU",       justify="center",      width=10)
     tbl.add_column("Target",      justify="left",        width=20)
     tbl.add_column("Status",      justify="center",      width=18)
     tbl.add_column("Tds",         justify="center",      width=4)
@@ -604,16 +599,11 @@ def _summary_table(city_data: list["CityDisplayData"]) -> Table:
             p_txt.append(" ✅", style="bold green")
 
         # Forecast
-        wu, om = cd.wu_forecast, cd.om_forecast
+        wu = cd.wu_forecast
         fc_t   = Text()
-        # Fix 13: usar "is not None" para não tratar 0°C como ausente
         if wu is not None:
             fc_t.append(f"W:{wu}°", style="blue")
-        if wu is not None and om is not None:
             fc_t.append(" ")
-        if om is not None:
-            fc_t.append(f"O:{om}°", style="cyan")
-        if wu is not None and om is not None:
             fc_t.append(" ✅" if cd.forecast_agree else " ⚠",
                         style="green" if cd.forecast_agree else "yellow")
 
@@ -655,13 +645,48 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
     """Tabelas colectivas: posições abertas e posições resolvidas."""
 
     # Recolher linhas: (city_name, pos_obj_or_None)
+    # FIX: mostrar posições dos últimos 3 dias, não só do dia atual
+    from datetime import timedelta
     rows: list[tuple[str, object]] = []
+    cutoff_date = date.today() - timedelta(days=3)
+
     for cd in city_data:
         if cd.positions_all:
             for pos in cd.positions_all:
-                rows.append((cd.city.name, pos))
+                # Filter by date_opened - only show last 3 days
+                d_open_raw = getattr(pos, "date_opened", None)
+                if d_open_raw:
+                    try:
+                        if hasattr(d_open_raw, 'isoformat'):
+                            d_open = d_open_raw
+                        else:
+                            d_open = date.fromisoformat(str(d_open_raw))
+                        if hasattr(d_open, 'isoformat') or isinstance(d_open, date):
+                            if isinstance(d_open, date) and d_open >= cutoff_date:
+                                rows.append((cd.city.name, pos))
+                            elif not isinstance(d_open, date):
+                                rows.append((cd.city.name, pos))
+                        else:
+                            rows.append((cd.city.name, pos))
+                    except Exception:
+                        rows.append((cd.city.name, pos))
+                else:
+                    rows.append((cd.city.name, pos))
         elif cd.bought and cd.position:
-            rows.append((cd.city.name, None))  # posição paper sem CLOB
+            # Paper position without CLOB - check if from last 3 days
+            entry_time = cd.position.get("timestamp") or cd.position.get("time")
+            if entry_time:
+                try:
+                    if isinstance(entry_time, str) and 'T' in entry_time:
+                        pos_date = date.fromisoformat(entry_time.split('T')[0])
+                        if pos_date >= cutoff_date:
+                            rows.append((cd.city.name, None))
+                    else:
+                        rows.append((cd.city.name, None))
+                except Exception:
+                    rows.append((cd.city.name, None))
+            else:
+                rows.append((cd.city.name, None))
 
     if not rows:
         return None, None
@@ -677,7 +702,7 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
             expand=True,
         )
         t.add_column("Cidade",   style="bold", width=16)
-        t.add_column("Abertura",               width=19)
+        t.add_column("Abertura",               width=24)
         t.add_column("Bracket",                width=20)
         t.add_column("Entrada",  justify="right", width=8)
         t.add_column("Actual",   justify="right", width=8)
@@ -687,8 +712,8 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
         t.add_column("Status",   justify="center", width=12)
         return t
 
-    tbl_open = _make_tbl("  Posições Abertas — todas as cidades")
-    tbl_resolved = _make_tbl("  Posições Resolvidas — todas as cidades")
+    tbl_open = _make_tbl("  Posições Abertas — últimos 3 dias")
+    tbl_resolved = _make_tbl("  Posições Resolvidas — últimos 3 dias")
     n_open = 0
     n_resolved = 0
     total_pnl_resolved = 0.0
@@ -775,18 +800,14 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
             bkt = str(cd.position.get("bracket", "?"))[:18]
             
             # Adicionar hora da abertura se disponível
-            entry_time = cd.position.get("entry_time") if cd.position else None
+            # live_bot.py guarda a hora em "timestamp" ou "time", não "entry_time"
+            entry_time = None
+            if cd.position:
+                entry_time = cd.position.get("timestamp") or cd.position.get("time")
             if entry_time:
-                if isinstance(entry_time, str):
-                    if "T" in entry_time:
-                        time_str = entry_time.split("T")[1][:5]  # HH:MM
-                    else:
-                        time_str = entry_time[-5:] if len(entry_time) >= 5 else ""
-                    d_op = f"{date.today().isoformat()} {time_str}"
-                else:
-                    d_op = date.today().isoformat()
+                d_op = _format_opened_at(entry_time, city_name, city_data)
             else:
-                d_op = date.today().isoformat()
+                d_op = _format_opened_at(date.today().isoformat(), city_name, city_data)
             
             # Calcular PnL para posições paper (buscar preço ATUAL do mercado)
             entry_ask = ask
@@ -798,7 +819,10 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
                 pos_label = cd.position.get("bracket", "")
                 for b in cd.market.get("brackets", []):
                     if b.get("label") == pos_label:
-                        current_ask = b.get("ask") or b.get("price") or entry_ask
+                        # Usar mid price (média bid/ask) para PnL mais realista
+                        bid = b.get("bid") or b.get("price") or entry_ask
+                        ask_mkt = b.get("ask") or b.get("price") or entry_ask
+                        current_ask = (bid + ask_mkt) / 2.0
                         break
             
             shares = math.floor(size_usdc / entry_ask) if entry_ask > 0 else 0
@@ -828,18 +852,19 @@ def _positions_tables(city_data: list["CityDisplayData"], trading_mode_str: str)
         pnl_p = getattr(pos, "pnl_pct",       None)
         entry = getattr(pos, "entry_ask",      0)
         shr   = getattr(pos, "shares",         0)
-        d_op  = getattr(pos, "opened_at", None) or getattr(pos, "date_opened", "?")
+        d_op_raw = getattr(pos, "opened_at", None) or getattr(pos, "date_opened", "?")
+        d_op = _format_opened_at(d_op_raw, city_name, city_data)
         b_lbl = str(getattr(pos, "bracket_label", "?"))[:18]
 
         s_lbl, s_sty = _status_for_row(pos, city_name)
         resolved = _is_resolved_status(s_lbl)
         if resolved:
-            _add_row_to(tbl_resolved, clbl, str(d_op), b_lbl, entry, mid, pnl_u, pnl_p, shr, s_lbl, s_sty)
+            _add_row_to(tbl_resolved, clbl, d_op, b_lbl, entry, mid, pnl_u, pnl_p, shr, s_lbl, s_sty)
             n_resolved += 1
             if pnl_u is not None:
                 total_pnl_resolved += float(pnl_u)
         else:
-            _add_row_to(tbl_open, clbl, str(d_op), b_lbl, entry, mid, pnl_u, pnl_p, shr, s_lbl, s_sty)
+            _add_row_to(tbl_open, clbl, d_op, b_lbl, entry, mid, pnl_u, pnl_p, shr, s_lbl, s_sty)
             n_open += 1
 
     if n_resolved > 0 and total_pnl_resolved != 0.0:
@@ -866,6 +891,58 @@ def _position_to_snapshot(pos) -> dict:
     status = getattr(pos, "status", None)
     data["status"] = getattr(status, "value", status)
     return data
+
+def _format_opened_at(d_op_raw, city_name: str, city_data: list) -> str:
+    """Formata a data de abertura com hora local da cidade."""
+    if d_op_raw is None or d_op_raw == "?":
+        return "?"
+
+    # Find city's timezone
+    city_tz = None
+    for cd in city_data:
+        if cd.city.name == city_name:
+            try:
+                city_tz = ZoneInfo(cd.city.timezone)
+            except Exception:
+                pass
+            break
+
+    # Parse the raw date
+    dt = None
+    if hasattr(d_op_raw, 'isoformat'):
+        dt = d_op_raw if hasattr(d_op_raw, 'tzinfo') and d_op_raw.tzinfo else d_op_raw.replace(tzinfo=ZoneInfo("UTC"))
+    elif isinstance(d_op_raw, str):
+        # Try ISO format first
+        for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            try:
+                dt = datetime.strptime(d_op_raw[:len(fmt)], fmt)
+                if fmt == "%Y-%m-%d":
+                    dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                elif "%z" not in fmt:
+                    dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                break
+            except ValueError:
+                continue
+        # Try just date
+        if dt is None:
+            try:
+                dt = datetime.strptime(d_op_raw, "%Y-%m-%d").replace(tzinfo=ZoneInfo("UTC"))
+            except ValueError:
+                return str(d_op_raw)[:19]
+
+    if dt is None:
+        return str(d_op_raw)[:19]
+
+    # Convert to city timezone
+    if city_tz:
+        try:
+            dt_local = dt.astimezone(city_tz)
+            return dt_local.strftime("%Y-%m-%d %H:%M") + f" ({dt_local.strftime('%z')[:3]})"
+        except Exception:
+            pass
+
+    return dt.strftime("%Y-%m-%d %H:%M") + " (UTC)"
+
 
 
 def _city_to_snapshot(cd: "CityDisplayData") -> dict:
@@ -906,7 +983,7 @@ def _city_to_snapshot(cd: "CityDisplayData") -> dict:
         "p_lgbm": cd.p_lgbm,
         "slots": cd.slots_so_far[-96:],
         "wu_forecast": cd.wu_forecast,
-        "om_forecast": cd.om_forecast,
+        # "om_forecast": removido — Open-Meteo descontinuado
         "forecast_agree": cd.forecast_agree,
         "market": {
             "title": cd.market.get("title") if cd.market else None,
@@ -1083,22 +1160,53 @@ def render_dashboard(
         _con.print(Panel(pos_resolved_tbl, border_style="dim cyan", padding=(0, 1)))
 
     # ── FOOTER ─────────────────────────────────────────────────────
+    # HOJE (dados do dia actual de cada cidade)
     pnl_dia   = sum(cd.daily_pnl  for cd in city_data)
     trd_dia   = sum(cd.n_trades   for cd in city_data)
     wins_dia  = sum(1 for cd in city_data if cd.daily_pnl > 0 and cd.n_trades > 0)
-    pnl_c     = "bold green" if pnl_dia >= 0 else "bold red"
+
+    # ATÉ AGORA (sessão: desde que o bot arrancou)
+    total_pnl_session = session_stats.get("total_pnl", 0.0)
+    total_trades_session = session_stats.get("total_trades", 0)
+
+    # Posições resolvidas na sessão (contar de todos os dias desde o arranque)
+    n_resolved_session = 0
+    for cd in city_data:
+        if cd.positions_all:
+            for pos in cd.positions_all:
+                status = getattr(getattr(pos, "status", None), "value", getattr(pos, "status", None))
+                if status and str(status).lower() in ("won", "lost", "expired"):
+                    n_resolved_session += 1
+
+    # Cores
+    pnl_dia_c = "bold green" if pnl_dia >= 0 else "bold red"
+    pnl_sess_c = "bold green" if total_pnl_session >= 0 else "bold red"
 
     footer = Text()
-    footer.append(f"  DIA: {trd_dia} trades  ", style="dim")
-    footer.append(f"cidades em profit: {wins_dia}/{n_cities}  ", style="dim")
-    footer.append("PnL dia: ", style="dim")
-    footer.append(f"{pnl_dia:+.2f}$   ", style=pnl_c)
+
+    # ── Linha 1: ATÉ AGORA (sessão) ──
+    footer.append("  ATÉ AGORA: ", style="bold dim")
+    footer.append(f"{total_trades_session} trades", style="bold white")
+    footer.append(f"  ({n_resolved_session} resolv.)  ", style="dim")
+    footer.append("PnL: ", style="dim")
+    footer.append(f"{total_pnl_session:+.2f}$  ", style=pnl_sess_c)
+
+    # ── Linha 2: HOJE ──
+    footer.append("│  ", style="dim")
+    footer.append("HOJE: ", style="bold dim")
+    footer.append(f"{trd_dia} trades", style="bold white")
+    footer.append(f"  ({wins_dia}/{n_cities} cidades +)  ", style="dim")
+    footer.append("PnL: ", style="dim")
+    footer.append(f"{pnl_dia:+.2f}$   ", style=pnl_dia_c)
+
+    # Uptime
     if session_stats.get("start_time"):
         elapsed = lisbon_now - session_stats["start_time"]
         h, rem  = divmod(int(elapsed.total_seconds()), 3600)
         m, _    = divmod(rem, 60)
-        footer.append(f"uptime {h}h{m:02d}m   ", style="dim")
-    footer.append(f"actualizado {lisbon_str}   Ctrl+C para parar", style="dim")
+        footer.append(f"│  uptime {h}h{m:02d}m  ", style="dim")
+    footer.append(f"actualizado {lisbon_str}", style="dim")
+    footer.append("   Ctrl+C para parar", style="dim")
 
     _con.print()
     _con.print(footer)

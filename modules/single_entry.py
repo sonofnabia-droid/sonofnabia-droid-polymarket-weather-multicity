@@ -22,9 +22,10 @@ from cities.config import CityConfig
 #  FUNCOES DE MODULO (para reutilizar em backtester/live_bot)
 # ══════════════════════════════════════════════════════
 
-def select_target_bracket(market: dict | None, running_max: float) -> dict | None:
+def select_target_bracket(market: dict | list | None, running_max: float) -> dict | None:
     """
     Selecciona o bracket Polymarket que contem floor(running_max).
+    Aceita dict {"brackets": [...]} ou lista [...] directamente.
 
     Logica (igual em live_bot e backtester — FIX Bug #8):
       1. Match exacto: bracket onde temp_lo <= target <= temp_hi
@@ -34,7 +35,11 @@ def select_target_bracket(market: dict | None, running_max: float) -> dict | Non
     """
     if not market:
         return None
-    brackets = market.get("brackets") or []
+    # Suporta dict {"brackets": [...]} ou lista [...] directamente
+    if isinstance(market, list):
+        brackets = market
+    else:
+        brackets = market.get("brackets") or []
     if not brackets:
         return None
 
@@ -284,7 +289,7 @@ class SingleEntry:
         }]
 
     @staticmethod
-    def _select_target_bracket(self, market: dict | None, running_max: float) -> dict | None:
+    def _select_target_bracket(market: dict | list | None, running_max: float) -> dict | None:
         # FIX Bug #8: delega para a funcao de modulo select_target_bracket
         # para garantir consistencia entre live_bot e backtester (antes o
         # backtester recalculava localmente com lógica diferente).
