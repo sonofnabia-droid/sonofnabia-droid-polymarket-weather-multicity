@@ -638,10 +638,31 @@ def _get_tg(trading_mode: str = None):
     return getattr(_get_tg, cache_key)
 
 
+def _safe_tg_call(fn, *args, **kwargs):
+    """Wrapper defensivo para chamadas TG que ignora argumentos inesperados.
+
+    Prevencao de crashes quando o modulo tg.py nao aceita certos kwargs.
+    Loga o erro em vez de crashar o bot inteiro.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except TypeError as e:
+        if "unexpected keyword argument" in str(e) or "got an unexpected keyword argument" in str(e):
+            err_msg = str(e)
+            arg_name = err_msg.split("'")[1] if "'" in err_msg else "unknown"
+            fn_name = getattr(fn, '__name__', str(fn))
+            print(f"  [TG] ⚠️  Chamada ignorada: {fn_name} — "
+                  f"argumento inesperado '{arg_name}'. "
+                  f"Atualize o tg.py ou remova este argumento do live_bot.py")
+            return None
+        # Outros TypeErrors (assinatura errada, etc.) — propagar
+        raise
+
 def _tg_thread(fn, *args, **kwargs) -> None:
     """Thread daemon para chamadas TG com protecao contra argumentos inesperados."""
     import threading
     threading.Thread(target=_safe_tg_call, args=(fn,) + args, kwargs=kwargs, daemon=True).start()
+
 
 def _tg_alert(msg: str) -> None:
     """Alerta genérico (texto livre) — fallback quando não há método dedicado."""
