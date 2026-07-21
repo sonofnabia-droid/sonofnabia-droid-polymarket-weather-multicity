@@ -639,9 +639,9 @@ def _get_tg(trading_mode: str = None):
 
 
 def _tg_thread(fn, *args, **kwargs) -> None:
+    """Thread daemon para chamadas TG com protecao contra argumentos inesperados."""
     import threading
-    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
-
+    threading.Thread(target=_safe_tg_call, args=(fn,) + args, kwargs=kwargs, daemon=True).start()
 
 def _tg_alert(msg: str) -> None:
     """Alerta genérico (texto livre) — fallback quando não há método dedicado."""
@@ -905,7 +905,7 @@ def _send_single_city_dashboard(tg_inst, states, city_name, daily_stats,
 
     # Enviar
     try:
-        tg_inst.dashboard(
+        _safe_tg_call(tg_inst.dashboard, 
             today=city_today.isoformat(),
             p=state.last_p_ensemble,
             rmax=rmax,
@@ -1795,9 +1795,10 @@ def main():
         # Evita cidades duplicadas (ex: "...,karachi,...,karachi") mantendo ordem.
         city_names = list(dict.fromkeys(raw_city_names))
     trading_mode = TradingMode.REAL if args.run == "real" else TradingMode.PAPER
-    global _TG_TRADING_MODE
-    _TG_TRADING_MODE = args.run.lower()  # "paper" ou "real"
+    trading_mode_str = args.run.lower()
     is_multi     = len(city_names) > 1
+    global _TG_TRADING_MODE
+    _TG_TRADING_MODE = args.run.lower()
     has_tty = sys.stdout.isatty()
     dashboard_enabled = is_multi and (not args.no_dashboard)
 
@@ -2510,12 +2511,10 @@ def main():
                                     "daily_trades": len(getattr(states[cn].daily_stats, "trades", [])) if states[cn].daily_stats else 0,
                                 })
                             
-                            tg_inst.alert_multi_city_summary(
+                            _safe_tg_call(tg_inst.alert_multi_city_summary, 
                                 mode_str=args.run.upper(),
                                 total_pnl=session_stats["total_pnl"],
                                 n_trades=session_stats["total_trades"],
-                                session_pnl=session_stats["total_pnl"],
-                                session_trades=session_stats["total_trades"],
                                 cities_data=cities_data
                             )
                         _tg_last_dashboard = now_ts
@@ -2563,7 +2562,7 @@ def main():
                                 except Exception:
                                     pass
                             try:
-                                tg_inst.alert_near_signal(
+                                _safe_tg_call(tg_inst.alert_near_signal, 
                                     city_cfg.name, p, thr,
                                     rmax=rmax, temp_now=temp_now,
                                 )
