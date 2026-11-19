@@ -1,0 +1,2167 @@
+{
+  "created_utc": "20261119T063131Z",
+  "purpose": "paper-only deployment; no secrets, live state, database, or REAL launcher",
+  "scopes": {
+    "A": [
+      "amsterdam",
+      "beijing",
+      "buenos_aires",
+      "busan",
+      "cape_town",
+      "chengdu",
+      "chongqing",
+      "guangzhou",
+      "istanbul",
+      "jeddah",
+      "karachi",
+      "kuala_lumpur",
+      "london",
+      "lucknow",
+      "madrid",
+      "manila",
+      "milan",
+      "moscow",
+      "munich",
+      "panama_city",
+      "paris",
+      "qingdao",
+      "sao_paulo",
+      "seoul",
+      "shanghai",
+      "shenzhen",
+      "singapore",
+      "taipei",
+      "tel_aviv",
+      "tokyo",
+      "toronto",
+      "warsaw",
+      "wellington",
+      "wuhan"
+    ],
+    "B": [
+      "amsterdam",
+      "beijing",
+      "buenos_aires",
+      "busan",
+      "cape_town",
+      "chengdu",
+      "chongqing",
+      "guangzhou",
+      "istanbul",
+      "jeddah",
+      "karachi",
+      "kuala_lumpur",
+      "london",
+      "lucknow",
+      "madrid",
+      "manila",
+      "milan",
+      "moscow",
+      "munich",
+      "panama_city",
+      "paris",
+      "qingdao",
+      "sao_paulo",
+      "seoul",
+      "shanghai",
+      "shenzhen",
+      "singapore",
+      "taipei",
+      "tel_aviv",
+      "tokyo",
+      "toronto",
+      "warsaw",
+      "wellington",
+      "wuhan"
+    ],
+    "C": [
+      "amsterdam",
+      "beijing",
+      "buenos_aires",
+      "busan",
+      "cape_town",
+      "chengdu",
+      "chongqing",
+      "guangzhou",
+      "istanbul",
+      "jeddah",
+      "karachi",
+      "kuala_lumpur",
+      "london",
+      "lucknow",
+      "madrid",
+      "manila",
+      "milan",
+      "moscow",
+      "munich",
+      "panama_city",
+      "paris",
+      "qingdao",
+      "sao_paulo",
+      "seoul",
+      "shanghai",
+      "shenzhen",
+      "singapore",
+      "taipei",
+      "tel_aviv",
+      "tokyo",
+      "toronto",
+      "warsaw",
+      "wellington",
+      "wuhan"
+    ],
+    "D": [
+      "amsterdam",
+      "beijing",
+      "buenos_aires",
+      "busan",
+      "cape_town",
+      "chengdu",
+      "chongqing",
+      "guangzhou",
+      "istanbul",
+      "jeddah",
+      "karachi",
+      "kuala_lumpur",
+      "london",
+      "lucknow",
+      "madrid",
+      "manila",
+      "milan",
+      "moscow",
+      "munich",
+      "panama_city",
+      "paris",
+      "qingdao",
+      "sao_paulo",
+      "seoul",
+      "shanghai",
+      "shenzhen",
+      "singapore",
+      "taipei",
+      "tel_aviv",
+      "tokyo",
+      "toronto",
+      "warsaw",
+      "wellington",
+      "wuhan"
+    ]
+  },
+  "source_scopes": {
+    "A": [
+      "amsterdam",
+      "beijing",
+      "buenos_aires",
+      "busan",
+      "cape_town",
+      "chengdu",
+      "chongqing",
+      "guangzhou",
+      "istanbul",
+      "jeddah",
+      "karachi",
+      "kuala_lumpur",
+      "london",
+      "lucknow",
+      "madrid",
+      "manila",
+      "milan",
+      "moscow",
+      "munich",
+      "panama_city",
+      "paris",
+      "qingdao",
+      "sao_paulo",
+      "seoul",
+      "shanghai",
+      "shenzhen",
+      "singapore",
+      "taipei",
+      "tel_aviv",
+      "tokyo",
+      "toronto",
+      "warsaw",
+      "wellington",
+      "wuhan"
+    ],
+    "B": [
+      "munich",
+      "madrid",
+      "paris",
+      "seoul",
+      "moscow",
+      "istanbul",
+      "beijing",
+      "london"
+    ],
+    "C": [
+      "singapore",
+      "tokyo",
+      "seoul",
+      "chongqing",
+      "wuhan",
+      "chengdu",
+      "madrid",
+      "buenos_aires",
+      "paris",
+      "toronto",
+      "panama_city",
+      "shenzhen"
+    ],
+    "D": [
+      "beijing",
+      "london",
+      "paris",
+      "seoul",
+      "munich"
+    ]
+  },
+  "collectors": {
+    "ask_csv": {
+      "enabled": false,
+      "city_set": "all_cities",
+      "interval_seconds": 3600,
+      "session": "paper_deploy_ask_collector",
+      "output": "ask_collector_data.csv"
+    },
+    "pm_books": {
+      "enabled": false,
+      "city_set": "all_cities",
+      "interval_seconds": 300,
+      "session": "paper_deploy_pm_books",
+      "database": "data/polymarket_weather_2026.sqlite",
+      "max_db_gib": 25,
+      "min_free_gib": 8,
+      "bootstrap_mode": "gamma_today_and_tomorrow_only",
+      "historical_backfill": false
+    }
+  },
+  "fleet_bots": [
+    {
+      "id": "A",
+      "mode": "paper",
+      "enabled": true,
+      "host": "paper-32gb",
+      "cities": [
+        "amsterdam",
+        "beijing",
+        "buenos_aires",
+        "busan",
+        "cape_town",
+        "chengdu",
+        "chongqing",
+        "guangzhou",
+        "istanbul",
+        "jeddah",
+        "karachi",
+        "kuala_lumpur",
+        "london",
+        "lucknow",
+        "madrid",
+        "manila",
+        "milan",
+        "moscow",
+        "munich",
+        "panama_city",
+        "paris",
+        "qingdao",
+        "sao_paulo",
+        "seoul",
+        "shanghai",
+        "shenzhen",
+        "singapore",
+        "taipei",
+        "tel_aviv",
+        "tokyo",
+        "toronto",
+        "warsaw",
+        "wellington",
+        "wuhan"
+      ]
+    },
+    {
+      "id": "B",
+      "mode": "paper",
+      "enabled": true,
+      "host": "paper-32gb",
+      "cities": [
+        "amsterdam",
+        "beijing",
+        "buenos_aires",
+        "busan",
+        "cape_town",
+        "chengdu",
+        "chongqing",
+        "guangzhou",
+        "istanbul",
+        "jeddah",
+        "karachi",
+        "kuala_lumpur",
+        "london",
+        "lucknow",
+        "madrid",
+        "manila",
+        "milan",
+        "moscow",
+        "munich",
+        "panama_city",
+        "paris",
+        "qingdao",
+        "sao_paulo",
+        "seoul",
+        "shanghai",
+        "shenzhen",
+        "singapore",
+        "taipei",
+        "tel_aviv",
+        "tokyo",
+        "toronto",
+        "warsaw",
+        "wellington",
+        "wuhan"
+      ]
+    },
+    {
+      "id": "C",
+      "mode": "paper",
+      "enabled": true,
+      "host": "paper-32gb",
+      "cities": [
+        "amsterdam",
+        "beijing",
+        "buenos_aires",
+        "busan",
+        "cape_town",
+        "chengdu",
+        "chongqing",
+        "guangzhou",
+        "istanbul",
+        "jeddah",
+        "karachi",
+        "kuala_lumpur",
+        "london",
+        "lucknow",
+        "madrid",
+        "manila",
+        "milan",
+        "moscow",
+        "munich",
+        "panama_city",
+        "paris",
+        "qingdao",
+        "sao_paulo",
+        "seoul",
+        "shanghai",
+        "shenzhen",
+        "singapore",
+        "taipei",
+        "tel_aviv",
+        "tokyo",
+        "toronto",
+        "warsaw",
+        "wellington",
+        "wuhan"
+      ]
+    },
+    {
+      "id": "D",
+      "mode": "paper",
+      "enabled": true,
+      "host": "paper-32gb",
+      "cities": [
+        "amsterdam",
+        "beijing",
+        "buenos_aires",
+        "busan",
+        "cape_town",
+        "chengdu",
+        "chongqing",
+        "guangzhou",
+        "istanbul",
+        "jeddah",
+        "karachi",
+        "kuala_lumpur",
+        "london",
+        "lucknow",
+        "madrid",
+        "manila",
+        "milan",
+        "moscow",
+        "munich",
+        "panama_city",
+        "paris",
+        "qingdao",
+        "sao_paulo",
+        "seoul",
+        "shanghai",
+        "shenzhen",
+        "singapore",
+        "taipei",
+        "tel_aviv",
+        "tokyo",
+        "toronto",
+        "warsaw",
+        "wellington",
+        "wuhan"
+      ]
+    },
+    {
+      "id": "E",
+      "mode": "real",
+      "enabled": false,
+      "host": "existing-host",
+      "cities": [
+        "munich",
+        "lucknow",
+        "seoul"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": ".gitignore",
+      "size_bytes": 407,
+      "sha256": "80275949830c0f3789b096b9a3bec77a4c99493b668a32027d5494a1eff6bf03"
+    },
+    {
+      "path": "PAPER_DEPLOYMENT_2026-11-18.md",
+      "size_bytes": 6544,
+      "sha256": "2a175f5ba8782c0144593e7d99322c40421a63ce63a4e9953e3b230248db9db2"
+    },
+    {
+      "path": "ask_collector.py",
+      "size_bytes": 4692,
+      "sha256": "5f1d105d61fede827f3ec92ced403e0b864b72a386f8d762a69bc0acc4318cb2"
+    },
+    {
+      "path": "cassiopeia_active_config.json",
+      "size_bytes": 26377,
+      "sha256": "dfa74d009ef784e511183a39e7942e07cb02dbdb21696e9f75d2d03fe5d5477d"
+    },
+    {
+      "path": "cassiopeia_backtester.py",
+      "size_bytes": 22860,
+      "sha256": "a52704a04a1baca91103f8043c3b9d5581bf4328ff945d6bd440c4dce4aeb2f5"
+    },
+    {
+      "path": "cassiopeia_entry.py",
+      "size_bytes": 9666,
+      "sha256": "450bd4c34678a5247af6f36a5866075ea5f43c32422634db51508b1a00dee97a"
+    },
+    {
+      "path": "cassiopeia_live_bot.py",
+      "size_bytes": 182379,
+      "sha256": "cda9deeb967c659340b08eb408759af993b5f52e8ba84313c928dee7fba0bc54"
+    },
+    {
+      "path": "cassiopeia_params.py",
+      "size_bytes": 12851,
+      "sha256": "b96ba38328d311dca8c385286282d1405975e7a07718960c048cb21054e01378"
+    },
+    {
+      "path": "cassiopeia_predictor.py",
+      "size_bytes": 19372,
+      "sha256": "de6cce1418a58dfa217ba836289e799047649efe4614a0cb1e5a6525381fd440"
+    },
+    {
+      "path": "cassiopeia_strategy.py",
+      "size_bytes": 3383,
+      "sha256": "ee0f91d027dff9b9df395c017d1af82cd5693861753d5d8f826a28527a5c0cd8"
+    },
+    {
+      "path": "cities/__init__.py",
+      "size_bytes": 51,
+      "sha256": "1e155e321f3940e356b3ca7cdb7becca35ff9d4c9db96ec5a36abd0b4e75d244"
+    },
+    {
+      "path": "cities/amsterdam/amsterdam_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3506612,
+      "sha256": "3c354b8043adf5d5cac676822a44f1b049c30767cd1fdb35f913294c488e4827"
+    },
+    {
+      "path": "cities/amsterdam/amsterdam_peak_model/peak_model_config.json",
+      "size_bytes": 14251,
+      "sha256": "0d855f10f105efa1977343d78e4a878aa8dace18720c0e0ebb2926094fc77551"
+    },
+    {
+      "path": "cities/amsterdam/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 515472,
+      "sha256": "9cf1cd472790e32685a0b8b076beca481ed24a1e1ef616f56388c3080720ceab"
+    },
+    {
+      "path": "cities/amsterdam/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8839,
+      "sha256": "276b1bf2c048907d2767e6e83ea5d14690021b68018ad6aa01cae2fb0b33c6b7"
+    },
+    {
+      "path": "cities/amsterdam/strategy_config_amsterdam.json",
+      "size_bytes": 1185,
+      "sha256": "62a16fdeafc78d8f69a5d1cd81c616d8e9097efaa4524659dfef8c8c4f0c78dd"
+    },
+    {
+      "path": "cities/amsterdam/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 376660,
+      "sha256": "5b60ca7c8368eaa6a90a9e8d180cc21ddf6881102c00d9ec98c0948ec67004df"
+    },
+    {
+      "path": "cities/amsterdam/v5_quantile_model/f1_report.json",
+      "size_bytes": 2394,
+      "sha256": "8011d5697b3585868eec2cdec2d7d583cf02959ea0ac78201d272264bbf34c60"
+    },
+    {
+      "path": "cities/amsterdam/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2608642,
+      "sha256": "bc7e97a82f59a2bb8d64b2747450f7b5d4abc1c86d4eb4aeb03fe9f6d1601036"
+    },
+    {
+      "path": "cities/beijing/beijing_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3508324,
+      "sha256": "fb773a7756567f676cea65c5e1563853d6cb3068646a32afbd20a92a673f3018"
+    },
+    {
+      "path": "cities/beijing/beijing_peak_model/peak_model_config.json",
+      "size_bytes": 13854,
+      "sha256": "9c3fe0ab247e5b29c4c8a49de989c7808c30dd7a427b84063eeeda0f9ec4cb97"
+    },
+    {
+      "path": "cities/beijing/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 314555,
+      "sha256": "5e4c370d5b93fb2caeebc354ad68a2f2cc91a54eb5a962df05badf9a68447292"
+    },
+    {
+      "path": "cities/beijing/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8836,
+      "sha256": "35b5844737f4d77abb4b4b72a8ccfb5073251afad3dc9086145969e6d1bb48b2"
+    },
+    {
+      "path": "cities/beijing/strategy_config_beijing.json",
+      "size_bytes": 1188,
+      "sha256": "4148abd6cc83ffd0c83b3ee3273646fb0bdfa471265a5b61b183c09c1ce7527c"
+    },
+    {
+      "path": "cities/beijing/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 393220,
+      "sha256": "65ddcdfc342a22885b345563fd2db8fb1b1fc71ad76dfa51e630ff26af1d2eed"
+    },
+    {
+      "path": "cities/beijing/v5_quantile_model/f1_report.json",
+      "size_bytes": 2389,
+      "sha256": "41290012a5dfb6fa34106339934c5c8f6680045723d6ee248892490c91b3e6cf"
+    },
+    {
+      "path": "cities/beijing/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1468091,
+      "sha256": "a21e2c95fd1d5789a895ac1789aed55d26141a3be0bde7e5c80193d64fcaee34"
+    },
+    {
+      "path": "cities/buenos_aires/buenos_aires_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3439348,
+      "sha256": "a1054ece7ea111bca0b6553ba727ab32cbf29ee920e6898463b7671f433ca68e"
+    },
+    {
+      "path": "cities/buenos_aires/buenos_aires_peak_model/peak_model_config.json",
+      "size_bytes": 12700,
+      "sha256": "d5173f712bd8bd49693643c6c0a2ca812d5ee1d2de2c991efe34cc825b224d13"
+    },
+    {
+      "path": "cities/buenos_aires/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 246508,
+      "sha256": "bd89ba32dedfc0958929003827dd824625ef700d6f0fee71cc6b2db67c3eacbd"
+    },
+    {
+      "path": "cities/buenos_aires/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8985,
+      "sha256": "1a99b8cc528db9d43a3e6404b0831a84b01d78b51d2940ebe42020698afef3d3"
+    },
+    {
+      "path": "cities/buenos_aires/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 543636,
+      "sha256": "1a090d1e89ef0d868d2fbc16370bb9d081f9fd69d8c8bca169206da142f39c56"
+    },
+    {
+      "path": "cities/buenos_aires/v5_quantile_model/f1_report.json",
+      "size_bytes": 2393,
+      "sha256": "83f41aef141f57c49b0e194f7aeaf27bf71fda65b7d7ccaf9896c771193b3688"
+    },
+    {
+      "path": "cities/buenos_aires/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2824885,
+      "sha256": "7397f4dff34ce4316a5985a990f1ceb845e46eb7061545912552b4c0057e3c86"
+    },
+    {
+      "path": "cities/busan/busan_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3462292,
+      "sha256": "ee3c6079454d32f425a037e66c4e771c3f8f2e7977ffa372bcb073ac7b6988d8"
+    },
+    {
+      "path": "cities/busan/busan_peak_model/peak_model_config.json",
+      "size_bytes": 13228,
+      "sha256": "e34f38fb3b3cffa4235f0caa69b841a3688e4fc9e3b19b4988ce95c998e001ab"
+    },
+    {
+      "path": "cities/busan/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 404134,
+      "sha256": "a9b66b6b1f9b64fd446754ee8610aa5c58381ed07184d5d9cdc29fd0ff6a4f81"
+    },
+    {
+      "path": "cities/busan/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9153,
+      "sha256": "7dbb351449f625110aa8ada1918d560a2e271df58f049264395d1dde55e1779f"
+    },
+    {
+      "path": "cities/busan/strategy_config_busan.json",
+      "size_bytes": 1189,
+      "sha256": "220bf5dec47d41f662725418c60de02906359904addb289d45c396ffff8eb65d"
+    },
+    {
+      "path": "cities/busan/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 421828,
+      "sha256": "a4f8501a2cbcc258c20e0d329e2e16eb1e83b0d4b8471fa2ee19e28913dca44a"
+    },
+    {
+      "path": "cities/busan/v5_quantile_model/f1_report.json",
+      "size_bytes": 2392,
+      "sha256": "190095d035f97c4f037779931082987647f0bea74e0cb4b7fef3c7f2c220c09e"
+    },
+    {
+      "path": "cities/busan/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1068053,
+      "sha256": "7ab255acf42f38364625a430d35aec5ec2a147e232c222fbcfb7f588314f80a3"
+    },
+    {
+      "path": "cities/cape_town/cape_town_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3528628,
+      "sha256": "9e71864898d704abc5981c8b879d809b352feae26357656534e20feb3172400d"
+    },
+    {
+      "path": "cities/cape_town/cape_town_peak_model/peak_model_config.json",
+      "size_bytes": 12500,
+      "sha256": "f49ce66fbd485dd1048fe5da855a4e09853da36a4b0793241c36d9e38d971f6d"
+    },
+    {
+      "path": "cities/cape_town/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 580684,
+      "sha256": "5cf2493c958b74a025a4cf29b17a1c8847cd23cd7db0a9fbedb5741cd83a7307"
+    },
+    {
+      "path": "cities/cape_town/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8287,
+      "sha256": "bb317f77cbcb6a94804271d1a48c0ee47c77b795bf9bf6a76bedd7363e4bb797"
+    },
+    {
+      "path": "cities/cape_town/strategy_config_cape_town.json",
+      "size_bytes": 1190,
+      "sha256": "83be7cfa6e2c20b816a2b9cd5b9ed7a1633cd26871040e1ecc31ffe407ce0fb0"
+    },
+    {
+      "path": "cities/cape_town/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 438692,
+      "sha256": "5544bd88b6f21c744217c00f7586e69cc1f57fb07c84fdd531d66a3e3cabd8b5"
+    },
+    {
+      "path": "cities/cape_town/v5_quantile_model/f1_report.json",
+      "size_bytes": 2395,
+      "sha256": "4a6df8ee98eb425e9e9705a5fe81a96f77d4b66b30f2660e6f4fca50b1434bb8"
+    },
+    {
+      "path": "cities/cape_town/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2676313,
+      "sha256": "151a880225d083d504920af638fba563000bc2f8a548f7b0b896fc883a12b328"
+    },
+    {
+      "path": "cities/chengdu/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 403617,
+      "sha256": "389dc403b64415eb8fe4969d3f1fe38c78146b6a18b5147d956e79bce3419286"
+    },
+    {
+      "path": "cities/chengdu/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8091,
+      "sha256": "28281c69463da2883960a4e2e054a007700eb1552c2e3631a5a9acfe1c201631"
+    },
+    {
+      "path": "cities/chengdu/chengdu_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3477300,
+      "sha256": "e05bfdbc729d61db88622ee5258435f19809d92cf5f52b2e38691e6f1c9f9250"
+    },
+    {
+      "path": "cities/chengdu/chengdu_peak_model/peak_model_config.json",
+      "size_bytes": 8304,
+      "sha256": "442d9187007de02c05cefc7c3a1d8720f43c5e8043a4cb4262f3f210e9bdff60"
+    },
+    {
+      "path": "cities/chengdu/strategy_config_chengdu.json",
+      "size_bytes": 1190,
+      "sha256": "efaa7da517f2db05646e07ecb78bd3f4df7ceba0625a80cff21c8cdcc996b83a"
+    },
+    {
+      "path": "cities/chengdu/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 647700,
+      "sha256": "6dfefb8c1e562a50a2499b2f4cb5054b83aa676ee453216a5f5c313837e4932b"
+    },
+    {
+      "path": "cities/chengdu/v5_quantile_model/f1_report.json",
+      "size_bytes": 2388,
+      "sha256": "87aabef997349f7a9887ab003b585d2ec64ad300cccce2a77d1336a92b1142db"
+    },
+    {
+      "path": "cities/chengdu/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2647186,
+      "sha256": "7d0c9d5b778c5a14b51a30ce66dc20d61e045d7d607a67c4480cd921ded4c4e7"
+    },
+    {
+      "path": "cities/chongqing/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 456444,
+      "sha256": "5436e961304364f339616bfd03959efcdbf53a25fc408afefbfa880a379fde15"
+    },
+    {
+      "path": "cities/chongqing/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8542,
+      "sha256": "c468a8390b7994ae091d2ca9fe533c096d1b086dc81cb5e515a0fd17bafe9e6f"
+    },
+    {
+      "path": "cities/chongqing/chongqing_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3637044,
+      "sha256": "76fca854eb33a3212957e572fa3bff08b83460382fda40afc5cd59ae7f48c81e"
+    },
+    {
+      "path": "cities/chongqing/chongqing_peak_model/peak_model_config.json",
+      "size_bytes": 8277,
+      "sha256": "62ba24e453dd67344b85a9872cba818e123a500d8ce9ecb7f8f3b93952c03157"
+    },
+    {
+      "path": "cities/chongqing/strategy_config_chongqing.json",
+      "size_bytes": 1219,
+      "sha256": "5c93e04e25c87f3204dd8bd2524a97805648abbfc2323b25f08806e550e1bc52"
+    },
+    {
+      "path": "cities/chongqing/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 352324,
+      "sha256": "b3e4550096d07f12e08fa25468603b92c927d0453df339bf59690fb13387a5da"
+    },
+    {
+      "path": "cities/chongqing/v5_quantile_model/f1_report.json",
+      "size_bytes": 2392,
+      "sha256": "d2823147a5980dbf04e03d91cead1e71e8ce70846d5a780726d2f5040e75003a"
+    },
+    {
+      "path": "cities/chongqing/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3248149,
+      "sha256": "8dc8bd70342782aea592445771a5b2d7e627a5621ea66e14ea8f405c6f91ce96"
+    },
+    {
+      "path": "cities/config.py",
+      "size_bytes": 32339,
+      "sha256": "4150f9648ee6b638b7c7249e3a129647fec0dea961710157c8319af294da4f08"
+    },
+    {
+      "path": "cities/guangzhou/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 544899,
+      "sha256": "4958f761185fc1ed1748ca7b29362c7d93a040023ebf743244686480d086fef8"
+    },
+    {
+      "path": "cities/guangzhou/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8373,
+      "sha256": "4a978a6c1b11aab08a07db0e712fc02aa37cf83dd7f8d32a306673a1408c9e93"
+    },
+    {
+      "path": "cities/guangzhou/guangzhou_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3706356,
+      "sha256": "41438a0e32fbaacf2fe91194471dcf4366c206d7a93df9c06f41b8625c31321b"
+    },
+    {
+      "path": "cities/guangzhou/guangzhou_peak_model/peak_model_config.json",
+      "size_bytes": 13712,
+      "sha256": "82024c6c193fb95270e994113e69aa24a4617c8675f9a0e01099bc15f6311e5c"
+    },
+    {
+      "path": "cities/guangzhou/strategy_config_guangzhou.json",
+      "size_bytes": 1219,
+      "sha256": "2ab4869b1a025ea39b806f44535cf9dbcba5dce971f2f8452b2f583287bd6ff7"
+    },
+    {
+      "path": "cities/guangzhou/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 449092,
+      "sha256": "3dac763ce442caee1721308bf39b98de0740e2d16f4ebfa2fae9a7b0486f39fd"
+    },
+    {
+      "path": "cities/guangzhou/v5_quantile_model/f1_report.json",
+      "size_bytes": 2390,
+      "sha256": "72beda22a2a829660989880ffedca9439f1d2496652ee4057b76b9a8f5eaa653"
+    },
+    {
+      "path": "cities/guangzhou/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2646480,
+      "sha256": "85e6ab09ea8219c245766f072fee7ceebf7ed138eabdb4a337fa810fd3f8a0e1"
+    },
+    {
+      "path": "cities/istanbul/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 276354,
+      "sha256": "d6809cd2fd12e4c6e175fc79d6a5e72bdf095a228eb47d071bba5063cd4192d9"
+    },
+    {
+      "path": "cities/istanbul/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8873,
+      "sha256": "0ef629882ce7da533b26c86f2380cffcc74327f06a2f3f46bf62ebed14c0be39"
+    },
+    {
+      "path": "cities/istanbul/istanbul_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3567892,
+      "sha256": "5c1d36a58ec865d1e006c1ead3f78df3e4a122d89288e3ec9e857347fecefd55"
+    },
+    {
+      "path": "cities/istanbul/istanbul_peak_model/peak_model_config.json",
+      "size_bytes": 14464,
+      "sha256": "92ce40235e2a8105e9215b7baadd7e7f08586e3698cd7f1b4058998386ff5893"
+    },
+    {
+      "path": "cities/istanbul/strategy_config_istanbul.json",
+      "size_bytes": 1188,
+      "sha256": "23b8ae7d59bda2b8fee34ee4511af9dbf4f7a3ccdd2a9e68044535723d67d663"
+    },
+    {
+      "path": "cities/istanbul/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 401428,
+      "sha256": "dbc757d7824efeea0ac417707137de6eee55b696416873b27fc34c9f193844fc"
+    },
+    {
+      "path": "cities/istanbul/v5_quantile_model/f1_report.json",
+      "size_bytes": 2384,
+      "sha256": "5fd02009192c18dad1a572a07655a7a8daa2a13c130755ed12fae59224d0f9d4"
+    },
+    {
+      "path": "cities/istanbul/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2052775,
+      "sha256": "6f71d7422b777e7a741c0fb2ff7c46e2ebd71146c88464607a4ccf9ff9edfdf1"
+    },
+    {
+      "path": "cities/jeddah/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 210581,
+      "sha256": "90d8614427f2838e56e838f271af6fb8b170d23df1c623d5557bc9592696748c"
+    },
+    {
+      "path": "cities/jeddah/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8134,
+      "sha256": "55c56f505c5b3541090c5ad68d1b151ec5f77f7435c82fbdd901601b3ad47476"
+    },
+    {
+      "path": "cities/jeddah/jeddah_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3072788,
+      "sha256": "07404b7612b5a731bebd7cec9c0a823d4f3bed6bc53163ce36c81f02fb41cf79"
+    },
+    {
+      "path": "cities/jeddah/jeddah_peak_model/peak_model_config.json",
+      "size_bytes": 10034,
+      "sha256": "583958986ab04d3c02580cb7851ca895d15d146b92993e3e2673ef46e306f247"
+    },
+    {
+      "path": "cities/jeddah/strategy_config_jeddah.json",
+      "size_bytes": 1185,
+      "sha256": "a10ddb8a1e4c510319f266c10b461f74df1278d668757e5e6e216bf1de7a4013"
+    },
+    {
+      "path": "cities/jeddah/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 391396,
+      "sha256": "7850209bc780321ebff1de0b2d4260a1b559f97e2de14fe6db382a587a9da66a"
+    },
+    {
+      "path": "cities/jeddah/v5_quantile_model/f1_report.json",
+      "size_bytes": 2389,
+      "sha256": "186b5c70b28de82c7271cc491b19c03df2b2651e3939bdc9f414dbea3a20fb35"
+    },
+    {
+      "path": "cities/jeddah/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3633626,
+      "sha256": "bdb046b7ef43966d5e8525b415aca51b63fb77d9f1adb49c20207532502412ba"
+    },
+    {
+      "path": "cities/karachi/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 367639,
+      "sha256": "d9e6e5134b167cf39c61897f9f18caac3599e7a1131f22bf6d28f13b6bfdc83f"
+    },
+    {
+      "path": "cities/karachi/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8497,
+      "sha256": "dad2bdb64de5e9930ff25eeee35c1976753e2a97db7d84cf7f2d74092f05e5a9"
+    },
+    {
+      "path": "cities/karachi/karachi_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3412180,
+      "sha256": "94dfe3674ffcdb16d2cc966e8b2f929b6b8ee1f2570006aab73711219a2b89d6"
+    },
+    {
+      "path": "cities/karachi/karachi_peak_model/peak_model_config.json",
+      "size_bytes": 12517,
+      "sha256": "d911a7c5f1ffe80c5a0152294134d6361a8cfb9e188bc4ffb509790e96f5f325"
+    },
+    {
+      "path": "cities/karachi/strategy_config_karachi.json",
+      "size_bytes": 1189,
+      "sha256": "e6c1ed7a83aabd5ad684fde1c4b3e72fc3652ca0fb66d8882976f52b39c1b3fb"
+    },
+    {
+      "path": "cities/karachi/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 362324,
+      "sha256": "ae89812eac8fb4a9ed4820d3c61cf5d8310f1a72cd57cb12c4b67e6d57914949"
+    },
+    {
+      "path": "cities/karachi/v5_quantile_model/f1_report.json",
+      "size_bytes": 2394,
+      "sha256": "82e180c1d59d153debc417316e1f84f5ca67300e6b58caef9b2f72d28fc3fc02"
+    },
+    {
+      "path": "cities/karachi/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2180074,
+      "sha256": "55ce68a736c3fe491909587781f28cb3ca3544bce1302d6207b0aa6b707395ad"
+    },
+    {
+      "path": "cities/kuala_lumpur/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 463514,
+      "sha256": "66d300a6a641a6e86d6460d308d41325abd8c9a71a5eb410021d846da3c13f67"
+    },
+    {
+      "path": "cities/kuala_lumpur/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 7929,
+      "sha256": "31ec9fea88fecb0fcf987af2d92bf5aa8640d98323dcc5e582990f87b970e9c1"
+    },
+    {
+      "path": "cities/kuala_lumpur/kuala_lumpur_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3477460,
+      "sha256": "6e44a3092aa4b3f91244ac30b11e30b4dbdc920a57a3e1e9c3e899c9cdc3d1bc"
+    },
+    {
+      "path": "cities/kuala_lumpur/kuala_lumpur_peak_model/peak_model_config.json",
+      "size_bytes": 12809,
+      "sha256": "9ea0e15fd9923b33987f7b6ec5cd8a52ca30dc1ad681be2901b68272f142d01b"
+    },
+    {
+      "path": "cities/kuala_lumpur/strategy_config_kuala_lumpur.json",
+      "size_bytes": 1188,
+      "sha256": "93301c401e7fec11cb4e66d8fbdb542b52ac03c8bf5738fe0c88e198745d8024"
+    },
+    {
+      "path": "cities/kuala_lumpur/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 285908,
+      "sha256": "3835b19207ef2daf91e68e0f29ca5f3ce73abedf298786cdda347c654d67bb62"
+    },
+    {
+      "path": "cities/kuala_lumpur/v5_quantile_model/f1_report.json",
+      "size_bytes": 2398,
+      "sha256": "40cd9109e8f84404bda0f96df882046d2bb3ca1501e6b9388f9dc0f98a5e9a0b"
+    },
+    {
+      "path": "cities/kuala_lumpur/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1668595,
+      "sha256": "823ce122e8fe1d693bc71baf62c79c28b1d3b94af1b130616d23146c61d62883"
+    },
+    {
+      "path": "cities/london/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 1041741,
+      "sha256": "d2034cc90030d0deee28f66c737b94997261241e43144136c0a223180b4c2088"
+    },
+    {
+      "path": "cities/london/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8918,
+      "sha256": "d45014e61ff0694095397dc19c41038d5ac862ff7063d6f09e8759fb11520f22"
+    },
+    {
+      "path": "cities/london/london_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3447364,
+      "sha256": "462bbc0b50a81c43c721932a0354c7941b0680a8de6b44c24802ee0dd424d65e"
+    },
+    {
+      "path": "cities/london/london_peak_model/peak_model_config.json",
+      "size_bytes": 14198,
+      "sha256": "559f3651c540225eef3d036e8d143a214412e31edb7f004706b10cc0152e2ff4"
+    },
+    {
+      "path": "cities/london/strategy_config_london.json",
+      "size_bytes": 1189,
+      "sha256": "0f6b699d6413978b9feeff72ee9325972cc228baf189b398b8a3c546eaa19b0e"
+    },
+    {
+      "path": "cities/london/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 528820,
+      "sha256": "99cb5ca916d57aaa5fdeeba66ba4062ff51fe27a8281d31e6888c3f11b85830e"
+    },
+    {
+      "path": "cities/london/v5_quantile_model/f1_report.json",
+      "size_bytes": 2392,
+      "sha256": "9de697149c4ab21470a90d64d8829ce8de8c235edad136b3b0b63f0e48921138"
+    },
+    {
+      "path": "cities/london/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 724899,
+      "sha256": "c629b3d65ef98fb788640b063166bc40a5c059e394d4f93d8b9aaaf67ccfa394"
+    },
+    {
+      "path": "cities/lucknow/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 493643,
+      "sha256": "b2198b35d6b790e7b15ef07c2b355d7dc261346fee6e19ac1a22bca261a35939"
+    },
+    {
+      "path": "cities/lucknow/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 7963,
+      "sha256": "3bc132582a108ceb799b0303302aa8244883deba70cb2c5efcd5c1d42837ca3b"
+    },
+    {
+      "path": "cities/lucknow/lucknow_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3443188,
+      "sha256": "a8c484eb53670a705f9cda248acedf67578ee1e8764ee505a7d4c5d768d1245c"
+    },
+    {
+      "path": "cities/lucknow/lucknow_peak_model/peak_model_config.json",
+      "size_bytes": 13221,
+      "sha256": "e1800bc949e72dfabe91b7dc0cbb0f9bcb99265424dddc377e2d681f5e2cdfa6"
+    },
+    {
+      "path": "cities/lucknow/strategy_config_lucknow.json",
+      "size_bytes": 1218,
+      "sha256": "65df78422dc74711e4f15b2d9449a0d71266dee00f368c04a48aa9cf6d98cd00"
+    },
+    {
+      "path": "cities/lucknow/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 550244,
+      "sha256": "ebc74b1e3fc4ddf7016979201b54a974272d9ca2127dba7741e03d65f30524b2"
+    },
+    {
+      "path": "cities/lucknow/v5_quantile_model/f1_report.json",
+      "size_bytes": 2396,
+      "sha256": "6cf0c24c0fdf70ba3379412d41717144d411faea739ed30efcb6dd2fd752652a"
+    },
+    {
+      "path": "cities/lucknow/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 4164863,
+      "sha256": "d035e052f2add66d7ebebeac6035296a56e5f0077a410276c48f9eda53720aa0"
+    },
+    {
+      "path": "cities/madrid/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 413287,
+      "sha256": "ac40b1aa5def11051aa2756c51d224e04b3494795eec973de9fac1993dcbd555"
+    },
+    {
+      "path": "cities/madrid/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8782,
+      "sha256": "2f034a6cb4888cb085b4f6b470b767e0791044ff9b690ca21d0a5ca390b40fbc"
+    },
+    {
+      "path": "cities/madrid/madrid_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3455620,
+      "sha256": "9d725d147edbde6194fcb4628dd5286113143004343d4295adea0f4c4c883a80"
+    },
+    {
+      "path": "cities/madrid/madrid_peak_model/peak_model_config.json",
+      "size_bytes": 12783,
+      "sha256": "09382e16c65f7ce3312616aaa64c86daee5e1d985fd54470e33d4699096a2735"
+    },
+    {
+      "path": "cities/madrid/strategy_config_madrid.json",
+      "size_bytes": 1220,
+      "sha256": "d2a7c16dce60abfcd22f02abe0f2531e02881de474e3cef2325f734f4ac8ac45"
+    },
+    {
+      "path": "cities/madrid/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 449444,
+      "sha256": "c13cff1f3bc2f08f00d52a91d759a018081ae9c2549915add7e89bcad2ce81f1"
+    },
+    {
+      "path": "cities/madrid/v5_quantile_model/f1_report.json",
+      "size_bytes": 2392,
+      "sha256": "28b76ddbe4389b518a9753c570afa8add6e4b3df99ce146381ff185d25e33161"
+    },
+    {
+      "path": "cities/madrid/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 4568775,
+      "sha256": "d819b1840167613fb529f781a33399410e1bfaf26c634b8df351b33550c63819"
+    },
+    {
+      "path": "cities/manila/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 800380,
+      "sha256": "dce47fcae7a6a2e4b24087beb46d2ce90c1f8cfa1b9217b47ea0f0a5bc300a82"
+    },
+    {
+      "path": "cities/manila/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8745,
+      "sha256": "5b26f12972f3f9a2fe139eca37a3985e79ebc97764217a1b21f8322fc4307e3a"
+    },
+    {
+      "path": "cities/manila/manila_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3477844,
+      "sha256": "bbf293a39833393c2a5aae5346fb8420f989b42b6e9a54f7fd5ad571e1c78f77"
+    },
+    {
+      "path": "cities/manila/manila_peak_model/peak_model_config.json",
+      "size_bytes": 10974,
+      "sha256": "de9fc161faded94028e9308f9fa33464d71d764bf17070bc1c37e9a53a40090f"
+    },
+    {
+      "path": "cities/manila/strategy_config_manila.json",
+      "size_bytes": 1188,
+      "sha256": "b17faae2823d69955a93c3a350f1248b47154362e7e5912afe5ce54428f2cb3c"
+    },
+    {
+      "path": "cities/manila/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 380596,
+      "sha256": "c147d450b43eb0b15df821804f35fe71b89273be8e462e9b1db30259cf6b2cbf"
+    },
+    {
+      "path": "cities/manila/v5_quantile_model/f1_report.json",
+      "size_bytes": 2390,
+      "sha256": "6438986f5922b2cdb786fe46f8bfbe149ec890487a49d343ab02e43281365287"
+    },
+    {
+      "path": "cities/manila/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3339194,
+      "sha256": "1752e63c9f9df6a7554aa34fcaf98d99eadbc60f0f1c7634cd43c1c596b4e712"
+    },
+    {
+      "path": "cities/milan/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 320296,
+      "sha256": "0e515434056c250c2c80aa5084e55eb0e4e2d39228089e011b2297ef6b539f98"
+    },
+    {
+      "path": "cities/milan/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8878,
+      "sha256": "6308a7cfb22ba7fcf80636948b73468979952c369b30b368923094b7bb2141e4"
+    },
+    {
+      "path": "cities/milan/milan_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3194468,
+      "sha256": "3486ebc894026e087d5aa65e5d75711e995fdafb663d07b1b0e8418a68ac9786"
+    },
+    {
+      "path": "cities/milan/milan_peak_model/peak_model_config.json",
+      "size_bytes": 13850,
+      "sha256": "17890f16825eb1a6714d117de6d278a0e7c591233e2084a745eeb1faf9a05607"
+    },
+    {
+      "path": "cities/milan/strategy_config_milan.json",
+      "size_bytes": 1192,
+      "sha256": "b40a75a9c589cafdc9a67f3f84b82b04711a1bb6e55d672478ec85f83bcf5a30"
+    },
+    {
+      "path": "cities/milan/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 532628,
+      "sha256": "48b69940802b7ce0f6eebe42d6caec18f9545f05a5e62c58e2a100550ce7c441"
+    },
+    {
+      "path": "cities/milan/v5_quantile_model/f1_report.json",
+      "size_bytes": 2386,
+      "sha256": "f13b984a0f093bcd1d3f599cfb894bd72df79b81c34e391175462c5d816de910"
+    },
+    {
+      "path": "cities/milan/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2276157,
+      "sha256": "772db9ce4a58e8bcfa4d7dc3de23d2f3614b95b10e35abeaef26848d3bd1e308"
+    },
+    {
+      "path": "cities/moscow/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 571374,
+      "sha256": "35b6275d18504bedb3409c122b67cc34768ef8c41cfc5071743a81247468a5eb"
+    },
+    {
+      "path": "cities/moscow/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9056,
+      "sha256": "7c85cc1f62768f3ea370cb9fb0576cb20df383c7f64c702d9904c228e50759de"
+    },
+    {
+      "path": "cities/moscow/moscow_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3379940,
+      "sha256": "a05185b91635143787b8637d4d90a363cf0f9379a3114e696f54e4fa456b0155"
+    },
+    {
+      "path": "cities/moscow/moscow_peak_model/peak_model_config.json",
+      "size_bytes": 14568,
+      "sha256": "2e460904e6a4342622b19bcd33b252ab9559a3b0d59267f39a611952206a72d6"
+    },
+    {
+      "path": "cities/moscow/strategy_config_moscow.json",
+      "size_bytes": 1188,
+      "sha256": "f38fd0ba3319c312d2d149233e375c58d285be0a6b9406b4e667cde9d55150a7"
+    },
+    {
+      "path": "cities/moscow/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 335316,
+      "sha256": "79ae0b320ab5bdd67c4eae5557c03e5d33889bd05f1e4a6fdf5de12580be67d2"
+    },
+    {
+      "path": "cities/moscow/v5_quantile_model/f1_report.json",
+      "size_bytes": 2389,
+      "sha256": "0f82a51454dbfe690c8614e56933cbb266362d41e0309c39e58b457c20ea06b7"
+    },
+    {
+      "path": "cities/moscow/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2532218,
+      "sha256": "f7e0740b79cf53321fcfca04364f0c403daece1a7c8fd67435438ee2b3ba274c"
+    },
+    {
+      "path": "cities/munich/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 473305,
+      "sha256": "6e63447988f37d7fdfc04334988edeed3b2787ac7097a27ea332aabb855b40a8"
+    },
+    {
+      "path": "cities/munich/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8914,
+      "sha256": "ef2f482475983601b6d79b1fdabc00cbcde9486b71b7f7e90eb56cffd5774bb6"
+    },
+    {
+      "path": "cities/munich/munich_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3700084,
+      "sha256": "cfd275b1144a9d94bbf3422c962d419d88d4cb68fa00818d00260027a2cea120"
+    },
+    {
+      "path": "cities/munich/munich_peak_model/peak_model_config.json",
+      "size_bytes": 14244,
+      "sha256": "f134d2f8ecf6041500ccf1bbfa60bb15ac19e5d79f6799b0ea4286b8f592c30c"
+    },
+    {
+      "path": "cities/munich/strategy_config_munich.json",
+      "size_bytes": 1188,
+      "sha256": "4e09e882f71478d8d70acaa6d31dfc4a03f3c4e7168122729a78c5bf5dea969a"
+    },
+    {
+      "path": "cities/munich/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 303684,
+      "sha256": "8c89b6c651745a44b745aa70f1d1f040f2ab4d78441e0c15afb1d61fdaf6837b"
+    },
+    {
+      "path": "cities/munich/v5_quantile_model/f1_report.json",
+      "size_bytes": 2385,
+      "sha256": "abb5cfda8b897af589b5e8b0b3ca31bd5eaa6ee26da097d88f352bf7cccb25f6"
+    },
+    {
+      "path": "cities/munich/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3038540,
+      "sha256": "0fb742edbf4d77da3ae3eab23e082dc67be11d6a45548cb0f03b97993c15ad47"
+    },
+    {
+      "path": "cities/panama_city/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 527659,
+      "sha256": "6cc9fcccd7ee5f8cda30039266ba38e6df5493d8cb6a0c86d647808198cecc19"
+    },
+    {
+      "path": "cities/panama_city/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 7977,
+      "sha256": "ff2980067f771ef9a7df99a105a6bf845901522593c7e902279a4b3d34d0982e"
+    },
+    {
+      "path": "cities/panama_city/panama_city_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3411284,
+      "sha256": "042e616af3ece96170a273760bec350fe77774899b1b35eee39ee4b31b9f093a"
+    },
+    {
+      "path": "cities/panama_city/panama_city_peak_model/peak_model_config.json",
+      "size_bytes": 11610,
+      "sha256": "ea541c821dee416167f63406e006a5536875129bd9b0a54cc8fb2c17974b7022"
+    },
+    {
+      "path": "cities/panama_city/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 282964,
+      "sha256": "afec1980b3bd1cf91e06e48e1df540b03b05fca14d3b582f22cafc96b3d8694d"
+    },
+    {
+      "path": "cities/panama_city/v5_quantile_model/f1_report.json",
+      "size_bytes": 2395,
+      "sha256": "7bdb71af25fa2b10cb151e832719888dd6db3edbf5da9ee2df7e7677907fd035"
+    },
+    {
+      "path": "cities/panama_city/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 4613159,
+      "sha256": "e54083b02070a278da486689572f07e87384be1c4a38ed2c7489e0439f3d8e36"
+    },
+    {
+      "path": "cities/paris/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 624200,
+      "sha256": "ba57d7da9fa777e7f8550195959f31dd83edb6ff5d48f22349957f38b31c92a7"
+    },
+    {
+      "path": "cities/paris/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8909,
+      "sha256": "e092c06f0390d7741ca9bf29ad6ad26b50d53efd46b4206fbe0ff7c4fe603f54"
+    },
+    {
+      "path": "cities/paris/paris_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3517332,
+      "sha256": "3c4e70ad416345874a6b8e57df80b73aa0c9d70f0dbc1082b3a1d3b4fac271d5"
+    },
+    {
+      "path": "cities/paris/paris_peak_model/peak_model_config.json",
+      "size_bytes": 13704,
+      "sha256": "a5f247d7ac9152c0788bddc986ebd330d4100c8de471932c6d316597a2665ee2"
+    },
+    {
+      "path": "cities/paris/strategy_config_paris.json",
+      "size_bytes": 1188,
+      "sha256": "e3ca3d736087dc689edaab258366f62a39222ba3f61461493d4dfd7dd0732467"
+    },
+    {
+      "path": "cities/paris/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 432388,
+      "sha256": "7e29dc6ae534e32cfca904beeb5a8066161bf37f378c0acc2b80ce212183fbab"
+    },
+    {
+      "path": "cities/paris/v5_quantile_model/f1_report.json",
+      "size_bytes": 2382,
+      "sha256": "6cc8823707b0771fb09b141603c92b163abd2790429f8a87397af3f62100f6e7"
+    },
+    {
+      "path": "cities/paris/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2159045,
+      "sha256": "0f2fcda40689b99aa20d6dd168bb1c6f233db100934567db24804d0f4ebe07cd"
+    },
+    {
+      "path": "cities/qingdao/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 291145,
+      "sha256": "0f43d5a1b8f357ed48390d43379be0df2c184924418a9fb51b34f1aa261f50f9"
+    },
+    {
+      "path": "cities/qingdao/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8500,
+      "sha256": "be65436d2d9612a9a9d771202f3c4a6aa641b8eb285899216ee89f4535164f19"
+    },
+    {
+      "path": "cities/qingdao/qingdao_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3392180,
+      "sha256": "ebb7f58c1faecff2f2de37de11a51cfc304de5690df75626582f3a2f2ca9fc05"
+    },
+    {
+      "path": "cities/qingdao/qingdao_peak_model/peak_model_config.json",
+      "size_bytes": 8169,
+      "sha256": "b2bc61275ebf5f70bb28df1430ef8f7aaaf3352718ad1e4795818ec717753829"
+    },
+    {
+      "path": "cities/qingdao/strategy_config_qingdao.json",
+      "size_bytes": 1186,
+      "sha256": "06d99cb05570410462945b0a92c423722a6e510839ac99d5f213c9543eb2338c"
+    },
+    {
+      "path": "cities/qingdao/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 320932,
+      "sha256": "e136fdb94761b17e6523cb64a6f8a89a83ca422a8c2c0ffc63d35c8cb4430c3d"
+    },
+    {
+      "path": "cities/qingdao/v5_quantile_model/f1_report.json",
+      "size_bytes": 2392,
+      "sha256": "6bbae246f1d37291702265889efd6799ef15edfc5daaaa438f285d8f74c7317c"
+    },
+    {
+      "path": "cities/qingdao/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 978242,
+      "sha256": "7f1bb2dad94b15a0b7cae3c9cd3185711dbcdd4147c8bcdafbfa291171d3b502"
+    },
+    {
+      "path": "cities/sao_paulo/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 340747,
+      "sha256": "d67cfafddcacd0913850f2a1753050c88ab8a7de97f2a6670b3e0f23c5f44bf4"
+    },
+    {
+      "path": "cities/sao_paulo/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 7969,
+      "sha256": "958c5432f831b4b29167707ca69c48b570a01740983c9a3925b0503a24478a7b"
+    },
+    {
+      "path": "cities/sao_paulo/sao_paulo_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3533028,
+      "sha256": "b6dd8f3b0bc986802a0acd632d825a33b560e98c0acf2ed7e506a2b7a91d9d7f"
+    },
+    {
+      "path": "cities/sao_paulo/sao_paulo_peak_model/peak_model_config.json",
+      "size_bytes": 11971,
+      "sha256": "8baf59dc0830c47b1a20e5b0201e7377e20739a6091381898120836e64ed60d2"
+    },
+    {
+      "path": "cities/sao_paulo/strategy_config_sao_paulo.json",
+      "size_bytes": 1188,
+      "sha256": "338df0c48f18a6194f09351817fccb00d5cc0698a9519291f7826c72da646d48"
+    },
+    {
+      "path": "cities/sao_paulo/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 470388,
+      "sha256": "243b9c1f8d59ddbaa7f4185d9a5a427a914973fc1f6d7a0b3d397d18576e6899"
+    },
+    {
+      "path": "cities/sao_paulo/v5_quantile_model/f1_report.json",
+      "size_bytes": 2389,
+      "sha256": "a76922b02640fef2f203341035a16c812bdc578d40214367b6f1b1f83ed1ab96"
+    },
+    {
+      "path": "cities/sao_paulo/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1853375,
+      "sha256": "8b75853dc7020649fe287102f63001ea4ce259bb77f0644300dd46b8cea3facf"
+    },
+    {
+      "path": "cities/seoul/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 371185,
+      "sha256": "a4c156df6801e9452b560a1df6d56adfd97dcd3e37d96dad6d4b1c7d4b4b3fd6"
+    },
+    {
+      "path": "cities/seoul/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9123,
+      "sha256": "f765c713c34ee9da31fee8f20d2027d53c5aef9b0ed451da68b67253f82f4884"
+    },
+    {
+      "path": "cities/seoul/seoul_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3333028,
+      "sha256": "b665583de9e3c5af484a6dccc7ef3c98baffb561cd16bb4da87a9249f0e79628"
+    },
+    {
+      "path": "cities/seoul/seoul_peak_model/peak_model_config.json",
+      "size_bytes": 14411,
+      "sha256": "84819f09fd9464b708deb1cc4969cc80c6a7367c7efc453a245f7eaf744bbfdc"
+    },
+    {
+      "path": "cities/seoul/strategy_config_seoul.json",
+      "size_bytes": 1188,
+      "sha256": "fa423009073f83a4bab1937347ab9686a63cc49524a0b5ea927d1351f3564597"
+    },
+    {
+      "path": "cities/seoul/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 292308,
+      "sha256": "9bd47d5036bdef6b10337f84d8cf68cad241a208e00ce6839f62fa1fd87603f8"
+    },
+    {
+      "path": "cities/seoul/v5_quantile_model/f1_report.json",
+      "size_bytes": 2383,
+      "sha256": "8a2496330e07d871e2ee9961f9a5c3812baa531dabe1a62cc7752374ea421833"
+    },
+    {
+      "path": "cities/seoul/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1838327,
+      "sha256": "c8f82d8078ea20fc6177d3ccb88040fd3c505cae51d7803df547cefd225e4ae1"
+    },
+    {
+      "path": "cities/shanghai/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 773264,
+      "sha256": "9badc1bfba9c40c47c48f60ca79be8ce6042d87e72835827adf20ea52fa020b0"
+    },
+    {
+      "path": "cities/shanghai/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9208,
+      "sha256": "aec2795279cefc59298fb573ad26fc2132bbb2d0bd550fc17d5160fe2885515d"
+    },
+    {
+      "path": "cities/shanghai/shanghai_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3770804,
+      "sha256": "e603a4f1937e3666384b1f0f245227d940a230ce3b65dcd1dc45189db1ef097d"
+    },
+    {
+      "path": "cities/shanghai/shanghai_peak_model/peak_model_config.json",
+      "size_bytes": 14244,
+      "sha256": "5dbb1ec244f8b1e85de69cf65eaddf2dc75bc4c260267678a053dd5853870eea"
+    },
+    {
+      "path": "cities/shanghai/strategy_config_shanghai.json",
+      "size_bytes": 1190,
+      "sha256": "a333ff70aedb2c059fafa7260fce0a70a0756b50e7fd5b74e490dd8c94e99231"
+    },
+    {
+      "path": "cities/shanghai/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 446340,
+      "sha256": "48184fa09a33aecf74feff5da426a810203a363b356990e822ad2cbe8d0020d9"
+    },
+    {
+      "path": "cities/shanghai/v5_quantile_model/f1_report.json",
+      "size_bytes": 2390,
+      "sha256": "06f27cbfc8dbfb4969ae1b101faa13b9edf4fba12b9ef27fcda9d1573cf75e78"
+    },
+    {
+      "path": "cities/shanghai/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1576278,
+      "sha256": "765564bf74959f7d3fa1caa5a59dbf38b85eafd91c0ea86fd9ca74af3d34eaf1"
+    },
+    {
+      "path": "cities/shenzhen/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 519931,
+      "sha256": "321885ded66759f7866d9038d8ebcbe16af4cad87a881438b2244db0d67f6852"
+    },
+    {
+      "path": "cities/shenzhen/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8939,
+      "sha256": "77e19482ed4e7358756c8207b38100f7a29ea29a7117d519fdebee76fccd1f21"
+    },
+    {
+      "path": "cities/shenzhen/shenzhen_peak_model/lgbm_peak.pkl",
+      "size_bytes": 2972644,
+      "sha256": "ffcaded1bbd34e0412b7fde502656c468b958f7120a2009a6086bbbf2805af18"
+    },
+    {
+      "path": "cities/shenzhen/shenzhen_peak_model/peak_model_config.json",
+      "size_bytes": 8030,
+      "sha256": "6f46bfe3f89afc574fab2e3428551258701dd81a2141780e931051210de74317"
+    },
+    {
+      "path": "cities/shenzhen/strategy_config_shenzhen.json",
+      "size_bytes": 1187,
+      "sha256": "47035e5978b5ed3ff56f4275f05b72a4e99d4bfcf2c1e0ea360a556673d8faf7"
+    },
+    {
+      "path": "cities/shenzhen/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 401524,
+      "sha256": "af4ab5b986f05a295e6dd244d788963b2b6a3585b45329bdaff15818418836cd"
+    },
+    {
+      "path": "cities/shenzhen/v5_quantile_model/f1_report.json",
+      "size_bytes": 2388,
+      "sha256": "aa31a316f61b8cf14390d8e84f8e5cd3a4d83610c05a7b879988a65571da31e7"
+    },
+    {
+      "path": "cities/shenzhen/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2018619,
+      "sha256": "4f6fa1ea3ac172939940c9052551f2dc956fcf773730de285e4e9b1640183ccf"
+    },
+    {
+      "path": "cities/singapore/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 557080,
+      "sha256": "c51ffdf7b26c551ebbb2d02d230e7aa28e794ae43c571031e8c5bfce957490da"
+    },
+    {
+      "path": "cities/singapore/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8061,
+      "sha256": "116f65c5385163bcb3a887253af411edad9656eff7466b453eacbf27e0f027d5"
+    },
+    {
+      "path": "cities/singapore/singapore_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3456276,
+      "sha256": "055d3daa0ea389ff1ee2140228fa6c270f7a154ff22c97bc258ae85506c2caf5"
+    },
+    {
+      "path": "cities/singapore/singapore_peak_model/peak_model_config.json",
+      "size_bytes": 13716,
+      "sha256": "361d029b77861c394cf36e0c78a42b6d9dfe9d09714d2ef083ff71cc8fc1aa4a"
+    },
+    {
+      "path": "cities/singapore/strategy_config_singapore.json",
+      "size_bytes": 1188,
+      "sha256": "ad1e19712f7663e392eeddeac2ae3df01fc0447c27ac90afd8b3ad56a4d45d8a"
+    },
+    {
+      "path": "cities/singapore/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 366644,
+      "sha256": "341f496dfeca6ba3e3cef37853f18989959c244370dd239a0e1cb2768b935b5f"
+    },
+    {
+      "path": "cities/singapore/v5_quantile_model/f1_report.json",
+      "size_bytes": 2389,
+      "sha256": "44844a167fd8c417c990876df3c178953ace3591efecd090ca7df7c33f6f1402"
+    },
+    {
+      "path": "cities/singapore/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 6020425,
+      "sha256": "639b070367fc8e968e21e971d44353393bde57feab52712338ddbba0f0ae6b01"
+    },
+    {
+      "path": "cities/taipei/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 420958,
+      "sha256": "66caaad1b957c81f288ce50e0eaa27287481d9c0f0b04e19b4e8ad70158b810d"
+    },
+    {
+      "path": "cities/taipei/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9213,
+      "sha256": "bcfbda88eb75bd43939cbc24c6c04c4bb82880cf798424c2d3791eb6c62f3207"
+    },
+    {
+      "path": "cities/taipei/strategy_config_taipei.json",
+      "size_bytes": 1161,
+      "sha256": "e99756a4e7470daadd974f6b748df86d2a990e460e63cb9e791310394d257039"
+    },
+    {
+      "path": "cities/taipei/taipei_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3403284,
+      "sha256": "517551746dab953592083ad0aa2cc25be7ea3eb9f00ec38fea1b52c63daed782"
+    },
+    {
+      "path": "cities/taipei/taipei_peak_model/peak_model_config.json",
+      "size_bytes": 14333,
+      "sha256": "4a69625b6a5fd87c6f3703dfd627d8fa234f73f07eac5796b05ac71b72fe577f"
+    },
+    {
+      "path": "cities/taipei/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 317972,
+      "sha256": "4a3f43982491d9424c3342d628ebd81e791ef83c2f9a54f0d2a7cdf20a866cc5"
+    },
+    {
+      "path": "cities/taipei/v5_quantile_model/f1_report.json",
+      "size_bytes": 2385,
+      "sha256": "45f4fc40de2c398a76e8f06ffcf55ed3c813d617af93a14139bdb9c62281bc17"
+    },
+    {
+      "path": "cities/taipei/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3219590,
+      "sha256": "886e0c6f8436e6819f8dfd22014d162f956463e633fa43751212bb3d642a61ff"
+    },
+    {
+      "path": "cities/tel_aviv/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 464160,
+      "sha256": "9d597bb6cf2d873d49b89cdf99551489744797b325cc956ef688eaaf2b32540a"
+    },
+    {
+      "path": "cities/tel_aviv/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8284,
+      "sha256": "3f86ade3fbaa58fa1230d2b720c7eb9f315b6c7eedb31b4c360ee7753faadd60"
+    },
+    {
+      "path": "cities/tel_aviv/strategy_config_tel_aviv.json",
+      "size_bytes": 1186,
+      "sha256": "4ff1e91709706ad61e21a09e90e0527dde6dc6c19b56fb0ba4ecef11c99c2ec8"
+    },
+    {
+      "path": "cities/tel_aviv/tel_aviv_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3369860,
+      "sha256": "af55c16ca16c97d6a5ae5c364d83ce07875bb97e974276f7ce0e508fe867a6a7"
+    },
+    {
+      "path": "cities/tel_aviv/tel_aviv_peak_model/peak_model_config.json",
+      "size_bytes": 12963,
+      "sha256": "a2ef0d896fa69f931b537f4e89f576d9eeee108ada30a18fa0b1f4302377f902"
+    },
+    {
+      "path": "cities/tel_aviv/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 439700,
+      "sha256": "bd129cf209e6169cbd288e5ef576c68e4c52a7a94554a38db0c136c442a2c3cd"
+    },
+    {
+      "path": "cities/tel_aviv/v5_quantile_model/f1_report.json",
+      "size_bytes": 2390,
+      "sha256": "a64340004020417b8d60ef1a2f3f7992dafc01e3bfcbfb18cf5e25eec4d20fde"
+    },
+    {
+      "path": "cities/tel_aviv/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3984176,
+      "sha256": "9f9372888bdcb736db546c215335ccfecdcd8db1705a93b6fa5a13a89db42bc0"
+    },
+    {
+      "path": "cities/tokyo/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 901730,
+      "sha256": "76e3060170abdc514cbf2d6e938d3b2a0c2762c3b1ada24fd3a34ac5615fef35"
+    },
+    {
+      "path": "cities/tokyo/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9155,
+      "sha256": "e7210bab00b986203cbc98943ac6824df17cc701bc5b13a497d6afea60fefb03"
+    },
+    {
+      "path": "cities/tokyo/strategy_config_tokyo.json",
+      "size_bytes": 1185,
+      "sha256": "c4b98e5f44d090b1259d0d61996612f3bd1a65c05af2d30ccf3d75964f26bddc"
+    },
+    {
+      "path": "cities/tokyo/tokyo_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3505892,
+      "sha256": "265d89b99960436a27ae1093f63dd54c40da39ec6de677437031e368bdfafaf0"
+    },
+    {
+      "path": "cities/tokyo/tokyo_peak_model/peak_model_config.json",
+      "size_bytes": 14598,
+      "sha256": "92578ebd20dde2fbffae7c328455e36b303679098311bafa832e33fbaabc7a90"
+    },
+    {
+      "path": "cities/tokyo/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 345124,
+      "sha256": "81ff9652c20a0dea79cfb9d1bb6d706a1d347ee20fa282753aece24cd1ae6b4d"
+    },
+    {
+      "path": "cities/tokyo/v5_quantile_model/f1_report.json",
+      "size_bytes": 2385,
+      "sha256": "5f11413fcb113dfceb8ffe853b215b71435c9405b3dbc711e541ee445b04b4ef"
+    },
+    {
+      "path": "cities/tokyo/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1587799,
+      "sha256": "7cf21f757c29b380693f1f76e3ca28882a2f95d8e2ea32b906b1e6cf9539f668"
+    },
+    {
+      "path": "cities/toronto/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 1697978,
+      "sha256": "250bc8927d198bd6cfb5678fb54d745dc664a906a606cb9d949178a873a272fe"
+    },
+    {
+      "path": "cities/toronto/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8972,
+      "sha256": "8a50e9261ae4bd7a854fbc5b075fdffed316b6591b65c482c8c1738e6c730a0c"
+    },
+    {
+      "path": "cities/toronto/toronto_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3276708,
+      "sha256": "d19f470e1d4bfbb41592a59883ca13bf47dd2438dae4a7e45036663db96d189b"
+    },
+    {
+      "path": "cities/toronto/toronto_peak_model/peak_model_config.json",
+      "size_bytes": 13791,
+      "sha256": "ce32a9023228d2d33d3a9a92c639fdfef9b2deefffb3f368ebd29d5304faca61"
+    },
+    {
+      "path": "cities/toronto/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 401108,
+      "sha256": "f522f5ffa62afa5aaf309c5ffd005a3e5a31db4b771bdd962704f56c2c99d3ed"
+    },
+    {
+      "path": "cities/toronto/v5_quantile_model/f1_report.json",
+      "size_bytes": 2379,
+      "sha256": "f29ba352659da19cac033af3bc33288be500e3d7604c61724c42494e00643a16"
+    },
+    {
+      "path": "cities/toronto/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3268647,
+      "sha256": "228adbc714d861fba2c4a9e14a6aaff07164279de6606b16093593fc57858137"
+    },
+    {
+      "path": "cities/warsaw/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 861728,
+      "sha256": "aa6154bc5c445b148ecef081bdff45b56b515526b0ee56dfa0bebfff6b6386ec"
+    },
+    {
+      "path": "cities/warsaw/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8955,
+      "sha256": "caed071db05b4fc6fa7eef0f02a8522c76ae572d03b300bbcf0375b9b31357b1"
+    },
+    {
+      "path": "cities/warsaw/strategy_config_warsaw.json",
+      "size_bytes": 1189,
+      "sha256": "3a4d5292758674fce535dcde988ecad47d43da8adf0b89139453fcb677029b3e"
+    },
+    {
+      "path": "cities/warsaw/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 682260,
+      "sha256": "cd6eba417ba9df1359ce189df9529ee945e9c4b3e3dd59287f864afd67f244ba"
+    },
+    {
+      "path": "cities/warsaw/v5_quantile_model/f1_report.json",
+      "size_bytes": 2390,
+      "sha256": "c05f8e64fd75150fbd6fa86595c1995bfd37b6376394cbeb1259dde6e4b26e78"
+    },
+    {
+      "path": "cities/warsaw/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 3912838,
+      "sha256": "5ad3f67a282e57a3810d4f40144c3ab83d211d1b9096e44be3bb91dde98ee579"
+    },
+    {
+      "path": "cities/warsaw/warsaw_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3650820,
+      "sha256": "a0536ee9b207738502f192150b0bf061646847c1d9ee0fcdd662c1bec0ab4ef9"
+    },
+    {
+      "path": "cities/warsaw/warsaw_peak_model/peak_model_config.json",
+      "size_bytes": 14538,
+      "sha256": "2cf3cbbd6b82080d5ab335001520734c87a8e8a90ec93f278e21e7e29eb3d6a7"
+    },
+    {
+      "path": "cities/wellington/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 762405,
+      "sha256": "5981d5c7c9ab5fd179224e9c116f53a67aacb75e702238a546706a5ccb137297"
+    },
+    {
+      "path": "cities/wellington/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 9038,
+      "sha256": "36c156c4bca458a65bddb99d69f09e6b68144854119fa34678796042c8c45956"
+    },
+    {
+      "path": "cities/wellington/strategy_config_wellington.json",
+      "size_bytes": 1188,
+      "sha256": "26c963d1fc7c170dc14bb5cf35d9d2592ead4e8faf03b280b29728241aa6b6f4"
+    },
+    {
+      "path": "cities/wellington/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 526868,
+      "sha256": "174424026f267194753b1daf2f41847884d48a5fc691ef764f1b195f834c295a"
+    },
+    {
+      "path": "cities/wellington/v5_quantile_model/f1_report.json",
+      "size_bytes": 2397,
+      "sha256": "6df27e2ab435dfadef4c3537d330dbe054f52af8abd7dc8fd5c703873d547d36"
+    },
+    {
+      "path": "cities/wellington/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 1770438,
+      "sha256": "34bbdc05585d301cd50312e4449c6ff1898881787994b9e304f2fedee4ae03a8"
+    },
+    {
+      "path": "cities/wellington/wellington_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3416820,
+      "sha256": "add6d02aa80c61c633c994e2b3e0231ae4a2d2cc1f1884d322e9d17c50bf420e"
+    },
+    {
+      "path": "cities/wellington/wellington_peak_model/peak_model_config.json",
+      "size_bytes": 14847,
+      "sha256": "d88534fc431b913ff7577661f68cc947ff773f1b5f816eb2866a0cdb15412070"
+    },
+    {
+      "path": "cities/wuhan/cassiopeia_rebound_model/lgbm_rebound.pkl",
+      "size_bytes": 575472,
+      "sha256": "9c5d161009a5c43a5fa7ad5c23e7f0d0c99b02d49d9aeabeaf3b87841289c0eb"
+    },
+    {
+      "path": "cities/wuhan/cassiopeia_rebound_model/rebound_model_config.json",
+      "size_bytes": 8406,
+      "sha256": "ff0ea900fb50d1894dbd9f7d6136304b5448c67a4fa1af1180bce36e275d7bec"
+    },
+    {
+      "path": "cities/wuhan/strategy_config_wuhan.json",
+      "size_bytes": 1219,
+      "sha256": "baebc61491ee06d3875c49350d310d14dc36087976e4fbb33b04134450cb4eb0"
+    },
+    {
+      "path": "cities/wuhan/v5_quantile_model/atom_classifier.pkl",
+      "size_bytes": 522852,
+      "sha256": "b30ff050c7611047c4f7d844a16d91b44ef6b69f1d5071ab97a07e534e0c6621"
+    },
+    {
+      "path": "cities/wuhan/v5_quantile_model/f1_report.json",
+      "size_bytes": 2388,
+      "sha256": "55560a28e3ddd11c1e7f6db858a32a9a5056ea30e3ffb876632356f3f50ba24f"
+    },
+    {
+      "path": "cities/wuhan/v5_quantile_model/quantiles.pkl",
+      "size_bytes": 2568123,
+      "sha256": "0a8699cd800eee7e11014f9de3d6d3eae22f65b0b977902d824ed115b1ff4a6f"
+    },
+    {
+      "path": "cities/wuhan/wuhan_peak_model/lgbm_peak.pkl",
+      "size_bytes": 3448500,
+      "sha256": "d8360ce1a843d6aafcd5ce19a77c014605717d3467bab24cf6a1bdc1f46841f9"
+    },
+    {
+      "path": "cities/wuhan/wuhan_peak_model/peak_model_config.json",
+      "size_bytes": 8291,
+      "sha256": "04dc9ce2e167a676155b17aaaa9e44ce282a1cba486bdbda5b4bfde29ad4a4a4"
+    },
+    {
+      "path": "cities_active.txt",
+      "size_bytes": 285,
+      "sha256": "762aeca075d9bc55e1c3802281d1468938c4239a0ceddf8bedd45ac763bb2855"
+    },
+    {
+      "path": "city_groups.py",
+      "size_bytes": 929,
+      "sha256": "6d384c7d5aa99e437539082699be897566cff50cde63ba7cd0ef11309af5a020"
+    },
+    {
+      "path": "clob_sizing.py",
+      "size_bytes": 4539,
+      "sha256": "4746c5b4027dc79912ae70cc10d163899cefafda108c7dd8ade80e8050ef5c1f"
+    },
+    {
+      "path": "deployment/paper/README.md",
+      "size_bytes": 3621,
+      "sha256": "464cc0e11f67058d983583e431125a7f600a951edc328f7fbc6ef883484ba40f"
+    },
+    {
+      "path": "deployment/paper/build_bundle.py",
+      "size_bytes": 8508,
+      "sha256": "a6b0ed73e8fd507a5762b668266a936dc70c82c96e58cb37d5e6fdffa7e5db12"
+    },
+    {
+      "path": "deployment/paper/fleet.json",
+      "size_bytes": 2131,
+      "sha256": "82700efcc84d17b27805a8937f1426daf05fe490ce0b3fc63a1d5606b1de2569"
+    },
+    {
+      "path": "deployment/paper/launch_collectors.py",
+      "size_bytes": 3179,
+      "sha256": "d6e81d98a1c321c756867d38d40253d518bc3f2456d5b81c370b8c62bb2cdba4"
+    },
+    {
+      "path": "deployment/paper/launch_fleet.py",
+      "size_bytes": 5638,
+      "sha256": "1be3fc0fe6a2c4f3a9fbda064f64018a5ae714c3679df9d069a55f22a50ac915"
+    },
+    {
+      "path": "deployment/paper/pm_books_collector.py",
+      "size_bytes": 5142,
+      "sha256": "02fa7897d4ecf63180183f630c595c629d5730bcc9cb2b6a5265503f9ab40be3"
+    },
+    {
+      "path": "deployment/paper/start_all_paper.sh",
+      "size_bytes": 309,
+      "sha256": "5d2b3ff0a92e14350d96354633fb355b7b1a843dc66594b48e5592d99087d616"
+    },
+    {
+      "path": "deployment/paper/start_collectors.sh",
+      "size_bytes": 308,
+      "sha256": "4855269d0221d7a20b4f4db86fdd7d3f2431562b576b6b13bad136b078a3f1c6"
+    },
+    {
+      "path": "display.py",
+      "size_bytes": 65846,
+      "sha256": "8c5621c3c11cdeba71979505a7be1bd852e1f3852fb93f08fd3158fb3ac1f758"
+    },
+    {
+      "path": "historic/amsterdam.csv",
+      "size_bytes": 27520536,
+      "sha256": "e1085c4585407dcca1e3a736ba5a7462fd6c0ddf9561f0460aef81332000ffbd"
+    },
+    {
+      "path": "historic/beijing.csv",
+      "size_bytes": 26329098,
+      "sha256": "81c1e6782150d27118096b77fa0e68b626ab8ba73cdba62aece6006bf7deb5e7"
+    },
+    {
+      "path": "historic/buenos_aires.csv",
+      "size_bytes": 14848805,
+      "sha256": "df50627ffeb8f634a8ed5767bf8cd3aad40152adfafe3520ce2071f906e10e02"
+    },
+    {
+      "path": "historic/busan.csv",
+      "size_bytes": 15166007,
+      "sha256": "237b3b58fc6f6872124bcd6b423d76dfaee3afe8406db0717124aeab9289ada9"
+    },
+    {
+      "path": "historic/cape_town.csv",
+      "size_bytes": 16529035,
+      "sha256": "26267ef9e39a67ca45212b54fdded3d658e9e5b96a9028114a0b89c691bb509f"
+    },
+    {
+      "path": "historic/chengdu.csv",
+      "size_bytes": 13366562,
+      "sha256": "38cfa6918484f4f435fd7ffb5397d748e692bfd8500ba74458c8333de620d158"
+    },
+    {
+      "path": "historic/chongqing.csv",
+      "size_bytes": 13238949,
+      "sha256": "fc7d1738fc0d080531ba063a08c3c328eb31b54696e13c97fdf4cc948395e666"
+    },
+    {
+      "path": "historic/guangzhou.csv",
+      "size_bytes": 27568565,
+      "sha256": "9eab1735766ffdf39fdfe33bf812f188796a9dbdf7c184e5f2d9dd2382d5855e"
+    },
+    {
+      "path": "historic/istanbul.csv",
+      "size_bytes": 29583253,
+      "sha256": "7f1f9b45562c901231c50c56e6774ad866324b3ecee6a6bc238af5955c541bf3"
+    },
+    {
+      "path": "historic/jeddah.csv",
+      "size_bytes": 13437348,
+      "sha256": "ce601a45cf36b2c6c5b73af9b2aec7848b00931cc1283db2cf4f5d94ef118b95"
+    },
+    {
+      "path": "historic/karachi.csv",
+      "size_bytes": 25380583,
+      "sha256": "c1035b3ec43b97264936117f88b2acd830c5685626a79e5296edc78acff631ce"
+    },
+    {
+      "path": "historic/kuala_lumpur.csv",
+      "size_bytes": 28010000,
+      "sha256": "225979ac9013f9024d33e074ba8716d702c349b8582c4594ba0903d40e6d6894"
+    },
+    {
+      "path": "historic/london.csv",
+      "size_bytes": 26888056,
+      "sha256": "240cdbd7219e321dc59aea87d26c31834898912b001d0587fabf1e9cbb03fb74"
+    },
+    {
+      "path": "historic/lucknow.csv",
+      "size_bytes": 21580810,
+      "sha256": "c1b7c886858693758bb102f57b59308a40fcf2ef39106dcdb6595c8467a62549"
+    },
+    {
+      "path": "historic/madrid.csv",
+      "size_bytes": 26769941,
+      "sha256": "970e5998ffad26580f1208861e1ddf3982df4a8d9aa23e0a01ac2daee792ba67"
+    },
+    {
+      "path": "historic/manila.csv",
+      "size_bytes": 14974624,
+      "sha256": "5826ae4369fed4b0b745af08c7c20ca1c81d8e7f80ceca8269f19e9c3d8ba233"
+    },
+    {
+      "path": "historic/milan.csv",
+      "size_bytes": 26184276,
+      "sha256": "e89fff0828c2c988cc906a868070690580b182d04b92624bfac0e568f52acf46"
+    },
+    {
+      "path": "historic/moscow.csv",
+      "size_bytes": 27993649,
+      "sha256": "7ec70c1ba0efa2abd08973d537814a31b9759f2aa3fdc63b8c2d86c099d0f2ab"
+    },
+    {
+      "path": "historic/munich.csv",
+      "size_bytes": 26833354,
+      "sha256": "9cf2eabdb0684861f7e02d0f5ad84c5d2b7fd6882cef3aadabe31c3ed4605778"
+    },
+    {
+      "path": "historic/panama_city.csv",
+      "size_bytes": 12074846,
+      "sha256": "237d990d8ab01f060adcdb47dce02c979c0369733076522a682cc277b5dfed77"
+    },
+    {
+      "path": "historic/paris.csv",
+      "size_bytes": 26515317,
+      "sha256": "0179edee7c73e103bdb8eebf9fe1f2cecd40c0e787744bbac1e950a19aab1388"
+    },
+    {
+      "path": "historic/qingdao.csv",
+      "size_bytes": 13025446,
+      "sha256": "4a706078da501261d880a8417dc7a9997f55581a828c301c6863c978a303b513"
+    },
+    {
+      "path": "historic/sao_paulo.csv",
+      "size_bytes": 14738075,
+      "sha256": "0ac853dc418f14ce5b934668115a869eecc0b60e06c762266ba28f024f6b3382"
+    },
+    {
+      "path": "historic/seoul.csv",
+      "size_bytes": 27157111,
+      "sha256": "a79875040e923ba0239b7e70f10a2730f2e82fbafa1244272da8f46fb2132685"
+    },
+    {
+      "path": "historic/shanghai.csv",
+      "size_bytes": 27511740,
+      "sha256": "f8a3d5fb7184aaaf1c3adef85f87cd45d928fbb7e9b9d2d95881a9f982bd3789"
+    },
+    {
+      "path": "historic/shenzhen.csv",
+      "size_bytes": 6597536,
+      "sha256": "c5cabb539449e9fcc3016b47f574bf89ee1d1a1e1ab1368ceb6b9d94231728c1"
+    },
+    {
+      "path": "historic/singapore.csv",
+      "size_bytes": 28807446,
+      "sha256": "7880495971d580e05c39202462f22267a1e1e9ba5980716dd8306e4f22dfa7c4"
+    },
+    {
+      "path": "historic/taipei.csv",
+      "size_bytes": 25871604,
+      "sha256": "908ccde9baf3e2e110b4065b13af7fd645a5e028f2ee6bfdeeaaacbda5e77f79"
+    },
+    {
+      "path": "historic/tel_aviv.csv",
+      "size_bytes": 24398157,
+      "sha256": "93ae8b8967165ac2513f4dcecfc3f369e44425b91b6d505425a49c18bbaad1b4"
+    },
+    {
+      "path": "historic/tokyo.csv",
+      "size_bytes": 31132959,
+      "sha256": "0d7c51bbff9eac804c35789433357b95f7e1fc1d3d7c53233925cdb02cdb2310"
+    },
+    {
+      "path": "historic/toronto.csv",
+      "size_bytes": 17154944,
+      "sha256": "16b0267a37c77bd197b48470c13d7cbecdfee3d81a06119221b932f71974e456"
+    },
+    {
+      "path": "historic/warsaw.csv",
+      "size_bytes": 27117233,
+      "sha256": "f9b8f9eaf9126af659ac2d53294d04462b9f329bcf97c4492e03867ff68ba7e1"
+    },
+    {
+      "path": "historic/wellington.csv",
+      "size_bytes": 25070635,
+      "sha256": "d0c9eb391e4ce3d42da25827885104464f600ee72a49f54191846f6587407d51"
+    },
+    {
+      "path": "historic/wuhan.csv",
+      "size_bytes": 13244466,
+      "sha256": "8bccd557ce1bdeda978b41051f5a37bb7f6b19638228860b0d3190200e01a851"
+    },
+    {
+      "path": "icao_coords.json",
+      "size_bytes": 1108,
+      "sha256": "44fc7d03ca7bc150cb59d4f803c8b1b0644c317b547c942a3192f6b70d75882a"
+    },
+    {
+      "path": "metar.py",
+      "size_bytes": 5599,
+      "sha256": "9e77f46a607e4f12507bd6e1a819731171f07045a7b839a1cd83a42323226052"
+    },
+    {
+      "path": "modules/__init__.py",
+      "size_bytes": 53,
+      "sha256": "84721ce90f6ba16ef544b21e3d051fd95de468aa18c0be80021feb5da99bb7c6"
+    },
+    {
+      "path": "modules/single_entry.py",
+      "size_bytes": 18051,
+      "sha256": "5c7e4c4f150b019545db66df38e37b488be86ce7fc79ba8431303982024e61a9"
+    },
+    {
+      "path": "modules/strategy_factory.py",
+      "size_bytes": 2099,
+      "sha256": "641ba251bb5445b3d26ade336056dcd4d12688a743bb6b91ba51c19b2906cea4"
+    },
+    {
+      "path": "official_resolution.py",
+      "size_bytes": 3655,
+      "sha256": "91f50556a3a21a5c835002f93be63ab3a50071e1da915a8ba0f0e9093b233a31"
+    },
+    {
+      "path": "opportunity_logger.py",
+      "size_bytes": 2842,
+      "sha256": "5b1aad97ca85348fbae637548b63c172a33c3332fab201c398d603c5b6ebe1e3"
+    },
+    {
+      "path": "polymarket_clob.py",
+      "size_bytes": 52180,
+      "sha256": "b33718f65fb5e2b7492e5e6bb63a9ec224b9155fb7023eed903ce95b0ec7fed2"
+    },
+    {
+      "path": "polymarket_clob_redeem_patch.py",
+      "size_bytes": 12714,
+      "sha256": "4cf39a2c8751f050eff980b93d320ab3f81ab4c8a35e8f27d67d54af296fbf4d"
+    },
+    {
+      "path": "polymarket_weather_archive.py",
+      "size_bytes": 25560,
+      "sha256": "f3385e399839e75b66eb57a1d14fd74ab3ebf3d6ce1f48b1c6be20ef076d6f3d"
+    },
+    {
+      "path": "predictor.py",
+      "size_bytes": 698,
+      "sha256": "68a4aa54af0aff1bd85a9020da946e4d7c54da65f9130e6ac599abc4901a165b"
+    },
+    {
+      "path": "requirements.txt",
+      "size_bytes": 435,
+      "sha256": "0d7df111602de367ee75096426a458a2ee7ef2de7a7cbdf28d993347bf20c74e"
+    },
+    {
+      "path": "resolution_rules.py",
+      "size_bytes": 4477,
+      "sha256": "70801a23b6dfd3ed0e13e36d61a81479b2364b14ddb5a497735791116711ece2"
+    },
+    {
+      "path": "tg.py",
+      "size_bytes": 72891,
+      "sha256": "2866f84a46bb56b96312c63f7732ac999601ffe3cee7eca82fda22084cf39c6a"
+    },
+    {
+      "path": "tick_logger.py",
+      "size_bytes": 19046,
+      "sha256": "5bd26e2f9e764b02ff6a3c0e4b542a0240f3cf5d5fbed8151491671874ad0ea2"
+    },
+    {
+      "path": "trade_ledger.py",
+      "size_bytes": 2891,
+      "sha256": "e9ca10f7e29bcf66e7880efb6df0deb599e1a8543a8378d167996ac317e071c5"
+    },
+    {
+      "path": "v6_breaker.py",
+      "size_bytes": 4180,
+      "sha256": "11b407ad5990a3ec74b6ab6376a4e990c0b43fbb82f5a9d6df93d0435667fd85"
+    },
+    {
+      "path": "v6_filter.py",
+      "size_bytes": 7417,
+      "sha256": "daf05c5164ee8e53de4e239faa784f76106621157fc072445797b9a6e3c1388f"
+    },
+    {
+      "path": "v6_gamma_check.py",
+      "size_bytes": 1491,
+      "sha256": "66e5e90c49e930f718bdbfb7ac5ffc34cf3b3523643a83e041daefa8b4b1d583"
+    },
+    {
+      "path": "weather.py",
+      "size_bytes": 36439,
+      "sha256": "f4552dce7736de5e03c85d7920f94ce70930a964fe3fefa90f4ece338338130a"
+    },
+    {
+      "path": "weather_v3.py",
+      "size_bytes": 10263,
+      "sha256": "6e10b3308eb91445d382622c225824f050d3340dd2a27717f5a2df864ad2e577"
+    },
+    {
+      "path": "wu_key_guard.py",
+      "size_bytes": 2117,
+      "sha256": "ce93210c1f41b159311ad3c6ce34dd04e6bec1eb9d47dc3600f1cf7c76eed557"
+    }
+  ]
+}

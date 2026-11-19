@@ -1,0 +1,1 @@
+amsterdam,beijing,buenos_aires,busan,cape_town,chengdu,chongqing,guangzhou,istanbul,jeddah,karachi,kuala_lumpur,london,lucknow,madrid,manila,milan,moscow,munich,panama_city,paris,qingdao,sao_paulo,seoul,shanghai,shenzhen,singapore,taipei,tel_aviv,tokyo,toronto,warsaw,wellington,wuhan

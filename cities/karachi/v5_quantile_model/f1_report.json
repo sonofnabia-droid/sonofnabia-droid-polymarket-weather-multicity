@@ -1,0 +1,120 @@
+{
+  "city": "karachi",
+  "test_from": "2024-01-01",
+  "n_train": 29499,
+  "n_test": 5550,
+  "quantiles": [
+    {
+      "tau": 0.05,
+      "pinball": 0.01447761195535122,
+      "coverage": 0.0,
+      "pass": true,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.15,
+      "pinball": 0.0434328371543494,
+      "coverage": 0.0,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.25,
+      "pinball": 0.07521007198384153,
+      "coverage": 0.002,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.35,
+      "pinball": 0.10128029321210527,
+      "coverage": 0.003,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.45,
+      "pinball": 0.1369402985074627,
+      "coverage": 0.007,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.55,
+      "pinball": 0.16744776084173973,
+      "coverage": 0.014,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.65,
+      "pinball": 0.18467931020102338,
+      "coverage": 0.029,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.75,
+      "pinball": 0.20235143571420244,
+      "coverage": 0.054,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": true
+    },
+    {
+      "tau": 0.85,
+      "pinball": 0.22070590194923573,
+      "coverage": 0.145,
+      "pass": false,
+      "cov_cond": 0.763,
+      "cond_pass": false
+    },
+    {
+      "tau": 0.95,
+      "pinball": 0.13240951885942406,
+      "coverage": 0.488,
+      "pass": false,
+      "cov_cond": 0.921,
+      "cond_pass": true
+    }
+  ],
+  "gate_pass": false,
+  "features": [
+    "hour",
+    "hour_sin",
+    "hour_cos",
+    "month",
+    "doy_sin",
+    "doy_cos",
+    "slot_frac",
+    "rmax",
+    "rmax_vs_prev7",
+    "rmax_vs_clim",
+    "delta_1h",
+    "delta_2h",
+    "slope_2h",
+    "plateau_hours",
+    "spread",
+    "humidity",
+    "wind_speed_kmh",
+    "uv_index",
+    "om_cloud",
+    "om_precip",
+    "om_radiation"
+  ],
+  "restriction": {
+    "f2_reliable_from": 0.44,
+    "note": "taus 0.05-0.55 colapsados (mesmo push previsto); F2 < 0.44 usa interp linear do \u00e1tomo \u2014 erro <=3pp no P"
+  },
+  "component_gates": {
+    "A": true,
+    "B_useful": 2
+  }
+}

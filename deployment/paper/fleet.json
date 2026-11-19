@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "city_sets": {
+    "all_cities": [
+      "amsterdam", "beijing", "buenos_aires", "busan", "cape_town",
+      "chengdu", "chongqing", "guangzhou", "istanbul", "jeddah",
+      "karachi", "kuala_lumpur", "london", "lucknow", "madrid",
+      "manila", "milan", "moscow", "munich", "panama_city", "paris",
+      "qingdao", "sao_paulo", "seoul", "shanghai", "shenzhen",
+      "singapore", "taipei", "tel_aviv", "tokyo", "toronto", "warsaw",
+      "wellington", "wuhan"
+    ]
+  },
+  "bots": [
+    {"id": "A", "name": "Cassiopeia A", "mode": "paper", "enabled": true, "host": "paper-32gb", "city_set": "all_cities", "session": "paper_deploy_a", "log_dir": "live_bot_logs_paper_deploy_a"},
+    {"id": "B", "name": "Andromeda B", "mode": "paper", "enabled": true, "host": "paper-32gb", "city_set": "all_cities", "session": "paper_deploy_b", "log_dir": "live_bot_logs_paper_deploy_b"},
+    {"id": "C", "name": "Andromeda C", "mode": "paper", "enabled": true, "host": "paper-32gb", "city_set": "all_cities", "session": "paper_deploy_c", "log_dir": "live_bot_logs_paper_deploy_c"},
+    {"id": "D", "name": "Micro D", "mode": "paper", "enabled": true, "host": "paper-32gb", "city_set": "all_cities", "session": "paper_deploy_d", "log_dir": "live_bot_logs_paper_deploy_d"},
+    {"id": "E", "name": "Athena E", "mode": "real", "enabled": false, "launchable": false, "host": "existing-host", "cities": ["munich", "lucknow", "seoul"], "session": "athena_real", "note": "Informativo apenas. Fora deste pacote; nunca arrancar neste launcher."}
+  ],
+  "collectors": {
+    "ask_csv": {
+      "enabled": false,
+      "city_set": "all_cities",
+      "interval_seconds": 3600,
+      "session": "paper_deploy_ask_collector",
+      "output": "ask_collector_data.csv"
+    },
+    "pm_books": {
+      "enabled": false,
+      "city_set": "all_cities",
+      "interval_seconds": 300,
+      "session": "paper_deploy_pm_books",
+      "database": "data/polymarket_weather_2026.sqlite",
+      "max_db_gib": 25,
+      "min_free_gib": 8,
+      "bootstrap_mode": "gamma_today_and_tomorrow_only",
+      "historical_backfill": false
+    }
+  }
+}

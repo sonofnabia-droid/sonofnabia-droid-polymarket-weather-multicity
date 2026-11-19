@@ -1,0 +1,57 @@
+{
+  "single": {
+    "threshold": 0.375,
+    "hour_min": 15,
+    "stop_loss_delta": 1.0,
+    "min_buy_ask": 0.2,
+    "max_buy_ask": 0.85
+  },
+  "_meta": {
+    "outcome_score": 224.2112,
+    "win_pct": 94.64,
+    "trades_per_year": 233.0,
+    "n_trades": 932,
+    "median_lag_h": 1.0,
+    "data_period": [
+      "2022-01-01",
+      "2026-07-18"
+    ],
+    "selection_period": [
+      "2022-01-01",
+      "2025-12-31"
+    ],
+    "validation_period": [
+      "2026-01-01",
+      "2026-07-18"
+    ],
+    "validation_years": [
+      2026
+    ],
+    "selection": {
+      "outcome_score": 224.2112,
+      "roi_pct": 50.71,
+      "win_pct": 94.64,
+      "n_trades": 932,
+      "trades_per_year": 233.0,
+      "median_lag_h": 1.0,
+      "n_days": 1460
+    },
+    "validation": {
+      "outcome_score": 116.019,
+      "roi_pct": 24.17,
+      "win_pct": 88.03,
+      "n_trades": 142,
+      "trades_per_year": 260.5,
+      "median_lag_h": 1.0,
+      "n_days": 199
+    },
+    "windows_considered": null,
+    "chosen_by": null,
+    "n_days": 1659,
+    "metric": "outcome",
+    "mode": "detailed",
+    "years": 5,
+    "calibrated_at": "2026-07-19T18:14:08",
+    "calibrated_with": "calibrate_all.py"
+  }
+}

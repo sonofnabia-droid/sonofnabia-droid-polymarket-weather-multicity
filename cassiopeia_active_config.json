@@ -1,0 +1,998 @@
+{
+  "munich": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 12,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 12,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos": {
+          "dates_from": "2022-05-30",
+          "days": 1511,
+          "entries": 1245,
+          "hit_rate": 0.8835341365461847,
+          "pnl_per_trade": 0.0949541365461847,
+          "edge_vs_price": 0.09495413654618479,
+          "approved": true
+        },
+        "metric": "pnl_per_trade",
+        "entry_price": 0.78,
+        "fee_model": "weather 0.05p(1-p)"
+      },
+      "applied_at": "2026-11-09T08:10:12.250333+00:00",
+      "version_id": "20261109_081012_249",
+      "source_file": "calibracoes_v2/cassiopeia_calibration_munich.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "amsterdam": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 3.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 3.0
+      },
+      "metrics": {
+        "entries": 792,
+        "hit_rate": 0.8421717171717171,
+        "edge_vs_price": 0.2367717171717174
+      },
+      "applied_at": "2026-09-19T16:52:27.725802+00:00",
+      "version_id": "20260919_165227_725",
+      "source_file": "cassiopeia_calibration_amsterdam.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "beijing": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos": {
+          "dates_from": "2022-05-30",
+          "days": 1511,
+          "entries": 1283,
+          "hit_rate": 0.9282930631332814,
+          "pnl_per_trade": 0.13971306313328136,
+          "edge_vs_price": 0.13971306313328147,
+          "approved": true
+        },
+        "metric": "pnl_per_trade",
+        "entry_price": 0.78,
+        "fee_model": "weather 0.05p(1-p)"
+      },
+      "applied_at": "2026-11-09T08:10:12.267127+00:00",
+      "version_id": "20261109_081012_266",
+      "source_file": "calibracoes_v2/cassiopeia_calibration_beijing.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "busan": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 12,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 12,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 919,
+        "hit_rate": 0.9031556039173014,
+        "edge_vs_price": 0.2977556039173016
+      },
+      "applied_at": "2026-09-19T16:52:27.860195+00:00",
+      "version_id": "20260919_165227_859",
+      "source_file": "cassiopeia_calibration_busan.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "cape_town": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 845,
+        "hit_rate": 0.9443786982248521,
+        "edge_vs_price": 0.33897869822485227
+      },
+      "applied_at": "2026-09-19T16:52:27.770500+00:00",
+      "version_id": "20260919_165227_769",
+      "source_file": "cassiopeia_calibration_cape_town.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "chengdu": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 2848,
+        "hit_rate": 0.9216994382022472,
+        "pnl": 916.1999999999998,
+        "pnl_per_trade": 0.3216994382022471,
+        "sharpe": 1.1972833475993776,
+        "roi": 0.5361657303370786,
+        "edge_vs_price": 0.32169943820224733,
+        "max_drawdown": -2.0000000000001137
+      },
+      "applied_at": "2026-08-31T05:21:58.322484+00:00",
+      "version_id": "20260831_052158_321",
+      "source_file": "cassiopeia_calibration_chengdu.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "chongqing": {
+    "threshold": 0.2,
+    "min_spread": 0.7,
+    "bracket_half": 0.5,
+    "start_hour": 12,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.7,
+        "bracket_half": 0.5,
+        "start_hour": 12,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1518,
+        "oos_hit_rate": 0.9756258234519104,
+        "oos_pnl_per_trade": 0.19677082345191035,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.262454+00:00",
+      "version_id": "20261110_131101_260",
+      "source_file": "cassiopeia_calibration_chongqing.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "guangzhou": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 15,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 2921,
+        "hit_rate": 0.9038000684697022,
+        "pnl": 887.4,
+        "pnl_per_trade": 0.30380006846970214,
+        "sharpe": 1.0301250479102482,
+        "roi": 0.5063334474495037,
+        "edge_vs_price": 0.3038000684697023,
+        "max_drawdown": -2.400000000000091
+      },
+      "applied_at": "2026-08-31T05:21:58.329518+00:00",
+      "version_id": "20260831_052158_328",
+      "source_file": "cassiopeia_calibration_guangzhou.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "helsinki": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 19,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 19,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 807,
+        "hit_rate": 0.815365551425031,
+        "edge_vs_price": 0.20996555142503126
+      },
+      "applied_at": "2026-09-19T16:52:27.736403+00:00",
+      "version_id": "20260919_165227_736",
+      "source_file": "cassiopeia_calibration_helsinki.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "istanbul": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 2.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 2.0
+      },
+      "metrics": {
+        "entries": 2114,
+        "hit_rate": 0.8571428571428571,
+        "pnl": 543.5999999999999,
+        "pnl_per_trade": 0.2571428571428571,
+        "sharpe": 0.7346730961626305,
+        "roi": 0.42857142857142855,
+        "edge_vs_price": 0.2571428571428571,
+        "max_drawdown": -3.200000000000273
+      },
+      "applied_at": "2026-08-31T05:21:58.335523+00:00",
+      "version_id": "20260831_052158_335",
+      "source_file": "cassiopeia_calibration_istanbul.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "jeddah": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1728,
+        "oos_hit_rate": 0.9699074074074074,
+        "oos_pnl_per_trade": 0.1910524074074074,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.288726+00:00",
+      "version_id": "20261110_131101_287",
+      "source_file": "cassiopeia_calibration_jeddah.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "karachi": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 2.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 2.0
+      },
+      "metrics": {
+        "oos_entries": 1255,
+        "oos_hit_rate": 0.9752988047808765,
+        "oos_pnl_per_trade": 0.19644380478087647,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.247316+00:00",
+      "version_id": "20261110_131101_245",
+      "source_file": "cassiopeia_calibration_karachi.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "kuala_lumpur": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 11,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 3515,
+        "hit_rate": 0.8210526315789474,
+        "pnl": 776.9999999999999,
+        "pnl_per_trade": 0.22105263157894733,
+        "sharpe": 0.5766147477797807,
+        "roi": 0.368421052631579,
+        "edge_vs_price": 0.2210526315789475,
+        "max_drawdown": -2.8000000000002956
+      },
+      "applied_at": "2026-08-31T05:21:58.344950+00:00",
+      "version_id": "20260831_052158_344",
+      "source_file": "cassiopeia_calibration_kuala_lumpur.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "london": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos": {
+          "dates_from": "2022-05-30",
+          "days": 1511,
+          "entries": 1355,
+          "hit_rate": 0.9040590405904059,
+          "pnl_per_trade": 0.11547904059040588,
+          "edge_vs_price": 0.11547904059040581,
+          "approved": true
+        },
+        "metric": "pnl_per_trade",
+        "entry_price": 0.78,
+        "fee_model": "weather 0.05p(1-p)"
+      },
+      "applied_at": "2026-11-09T08:10:12.255201+00:00",
+      "version_id": "20261109_081012_254",
+      "source_file": "calibracoes_v2/cassiopeia_calibration_london.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "lucknow": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 1217,
+        "hit_rate": 0.8833196384552178,
+        "edge_vs_price": 0.27791963845521783
+      },
+      "applied_at": "2026-09-19T16:52:27.780810+00:00",
+      "version_id": "20260919_165227_780",
+      "source_file": "cassiopeia_calibration_lucknow.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "madrid": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 12,
+    "end_hour": 20,
+    "outlier_cap": 2.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 12,
+        "end_hour": 20,
+        "outlier_cap": 2.0
+      },
+      "metrics": {
+        "oos_entries": 1317,
+        "oos_hit_rate": 0.9749430523917996,
+        "oos_pnl_per_trade": 0.19608805239179947,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.314787+00:00",
+      "version_id": "20261110_131101_313",
+      "source_file": "cassiopeia_calibration_madrid.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "manila": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 1045,
+        "hit_rate": 0.8870813397129187,
+        "edge_vs_price": 0.28168133971291887
+      },
+      "applied_at": "2026-09-19T16:52:27.833211+00:00",
+      "version_id": "20260919_165227_832",
+      "source_file": "cassiopeia_calibration_manila.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "milan": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 12,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 12,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1664,
+        "oos_hit_rate": 0.9633413461538461,
+        "oos_pnl_per_trade": 0.18448634615384613,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.232118+00:00",
+      "version_id": "20261110_131101_230",
+      "source_file": "cassiopeia_calibration_milan.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "moscow": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 19,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 19,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 803,
+        "hit_rate": 0.8306351183063512,
+        "edge_vs_price": 0.22523511830635146
+      },
+      "applied_at": "2026-09-19T16:52:27.746283+00:00",
+      "version_id": "20260919_165227_745",
+      "source_file": "cassiopeia_calibration_moscow.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "paris": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos": {
+          "dates_from": "2022-06-04",
+          "days": 1506,
+          "entries": 1241,
+          "hit_rate": 0.911361804995971,
+          "pnl_per_trade": 0.12278180499597097,
+          "edge_vs_price": 0.12278180499597102,
+          "approved": true
+        },
+        "metric": "pnl_per_trade",
+        "entry_price": 0.78,
+        "fee_model": "weather 0.05p(1-p)"
+      },
+      "applied_at": "2026-11-09T08:10:12.258989+00:00",
+      "version_id": "20261109_081012_258",
+      "source_file": "calibracoes_v2/cassiopeia_calibration_paris.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "qingdao": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1607,
+        "oos_hit_rate": 0.95457373988799,
+        "oos_pnl_per_trade": 0.17571873988799003,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.200107+00:00",
+      "version_id": "20261110_131101_194",
+      "source_file": "cassiopeia_calibration_qingdao.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "seoul": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1412,
+        "oos_hit_rate": 0.9589235127478754,
+        "oos_pnl_per_trade": 0.18006851274787533,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.275619+00:00",
+      "version_id": "20261110_131101_274",
+      "source_file": "cassiopeia_calibration_seoul.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "shanghai": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 2229,
+        "hit_rate": 0.9362943023777479,
+        "pnl": 749.5999999999999,
+        "pnl_per_trade": 0.3362943023777478,
+        "sharpe": 1.3766601435599992,
+        "roi": 0.560490503962913,
+        "edge_vs_price": 0.3362943023777478,
+        "max_drawdown": -2.0000000000001137
+      },
+      "applied_at": "2026-08-31T05:21:58.391142+00:00",
+      "version_id": "20260831_052158_390",
+      "source_file": "cassiopeia_calibration_shanghai.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "shenzhen": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1761,
+        "oos_hit_rate": 0.9574105621805792,
+        "oos_pnl_per_trade": 0.1785555621805792,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.301745+00:00",
+      "version_id": "20261110_131101_300",
+      "source_file": "cassiopeia_calibration_shenzhen.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "singapore": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 3087,
+        "hit_rate": 0.9067055393586005,
+        "pnl": 946.8,
+        "pnl_per_trade": 0.30670553935860057,
+        "sharpe": 1.0543631073959658,
+        "roi": 0.5111758989310011,
+        "edge_vs_price": 0.3067055393586008,
+        "max_drawdown": -2.4000000000002046
+      },
+      "applied_at": "2026-08-31T05:21:58.400371+00:00",
+      "version_id": "20260831_052158_399",
+      "source_file": "cassiopeia_calibration_singapore.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "taipei": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 1772,
+        "hit_rate": 0.871331828442438,
+        "pnl": 480.79999999999995,
+        "pnl_per_trade": 0.2713318284424379,
+        "sharpe": 0.8101227131849227,
+        "roi": 0.4522197140707299,
+        "edge_vs_price": 0.2713318284424381,
+        "max_drawdown": -2.6000000000001364
+      },
+      "applied_at": "2026-08-31T05:21:58.403151+00:00",
+      "version_id": "20260831_052158_402",
+      "source_file": "cassiopeia_calibration_taipei.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "tel_aviv": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 3.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 3.0
+      },
+      "metrics": {
+        "entries": 805,
+        "hit_rate": 0.9316770186335404,
+        "edge_vs_price": 0.3262770186335405
+      },
+      "applied_at": "2026-09-19T16:52:27.810939+00:00",
+      "version_id": "20260919_165227_810",
+      "source_file": "cassiopeia_calibration_tel_aviv.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "tokyo": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 903,
+        "hit_rate": 0.8704318936877077,
+        "edge_vs_price": 0.26503189368770796
+      },
+      "applied_at": "2026-09-19T16:52:27.842244+00:00",
+      "version_id": "20260919_165227_841",
+      "source_file": "cassiopeia_calibration_tokyo.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "warsaw": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 12,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 12,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 847,
+        "hit_rate": 0.8795749704840614,
+        "edge_vs_price": 0.2741749704840616
+      },
+      "applied_at": "2026-09-19T16:52:27.716145+00:00",
+      "version_id": "20260919_165227_715",
+      "source_file": "cassiopeia_calibration_warsaw.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "wellington": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 14,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 14,
+        "end_hour": 18,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 2693,
+        "hit_rate": 0.9357593761604159,
+        "pnl": 904.1999999999998,
+        "pnl_per_trade": 0.33575937616041585,
+        "sharpe": 1.3691799498760833,
+        "roi": 0.5595989602673598,
+        "edge_vs_price": 0.33575937616041607,
+        "max_drawdown": -2.800000000000182
+      },
+      "applied_at": "2026-08-31T05:21:58.427624+00:00",
+      "version_id": "20260831_052158_426",
+      "source_file": "cassiopeia_calibration_wellington.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "wuhan": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 15,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.25,
+        "min_spread": 0.3,
+        "bracket_half": 0.3,
+        "start_hour": 12,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "entries": 2459,
+        "hit_rate": 0.96177307848719,
+        "pnl": 889.5999999999999,
+        "pnl_per_trade": 0.36177307848718987,
+        "sharpe": 1.886370293062748,
+        "roi": 0.6029551308119832,
+        "edge_vs_price": 0.36177307848719,
+        "max_drawdown": -1.2000000000000455
+      },
+      "applied_at": "2026-08-31T05:21:58.431999+00:00",
+      "version_id": "20260831_052158_431",
+      "source_file": "cassiopeia_calibration_wuhan.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "sao_paulo": {
+    "threshold": 0.2,
+    "min_spread": 0.3,
+    "bracket_half": 0.5,
+    "start_hour": 14,
+    "end_hour": 20,
+    "outlier_cap": 4.0,
+    "_meta": {
+      "best_params": {
+        "threshold": 0.2,
+        "min_spread": 0.3,
+        "bracket_half": 0.5,
+        "start_hour": 14,
+        "end_hour": 20,
+        "outlier_cap": 4.0
+      },
+      "metrics": {
+        "oos_entries": 1258,
+        "oos_hit_rate": 0.9880763116057234,
+        "oos_pnl_per_trade": 0.2092213116057233,
+        "source": "metar_era_v4.2"
+      },
+      "applied_at": "2026-11-10T13:11:01.217894+00:00",
+      "version_id": "20261110_131101_216",
+      "source_file": "cassiopeia_calibration_sao_paulo.json"
+    },
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  },
+  "mexico_city": {
+    "threshold": 0.25,
+    "min_spread": 0.3,
+    "bracket_half": 0.3,
+    "start_hour": 12,
+    "end_hour": 18,
+    "outlier_cap": 4.0,
+    "min_buy_ask": 0.75,
+    "max_buy_ask": 0.9
+  }
+}

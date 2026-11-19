@@ -1,0 +1,33 @@
+# ambientes/venvs
+venv/
+.venv/
+.webvenv/
+__pycache__/
+.pytest_cache/
+
+# CREDENCIAIS — NUNCA no git
+.env
+.env2
+.env*
+
+# logs e dados vivos
+live_bot_logs/
+live_bot_logs_v6/
+startup.log
+*_history_max.json
+
+# dados grandes
+om_data_PARKED/
+testedmedia_data/
+historic/
+possible-trash/
+ticks/
+
+# artefactos
+*.pkl
+*.bak
+*.tmp
+_grid_progress_*.txt
+cassiopeia_calibration_*
+cassiopeia_config_history/
+poly_keys.env
