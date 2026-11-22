@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Cassiopeia · Weather Market Replay</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="app-shell">
+  <header class="sitebar">
+    <div class="sitebar-inner">
+      <div class="brand"><span class="brand-mark">✦</span><div><strong>Cassiopeia <span>Replay</span></strong><small>WEATHER × MARKET INTELLIGENCE</small></div></div>
+      <div class="sitebar-right"><span class="read-only"><span class="dot"></span> HISTÓRICO · SÓ LEITURA</span><span class="sitebar-hint">SQLite local</span></div>
+    </div>
+  </header>
+  <main class="main">
+    <section class="market-head">
+      <div class="market-title-row">
+        <div class="market-icon" aria-hidden="true">☀️</div>
+        <div class="market-title-text"><p class="breadcrumb">Weather <span>·</span> Recurring <span>·</span> Market replay</p><h1 id="marketTitle">Highest temperature —</h1><p id="subtitle">Escolhe a cidade e o dia para reproduzir um mercado arquivado.</p></div>
+      </div>
+      <div class="market-controls">
+        <label class="field-label">Cidade <select id="city" aria-label="Cidade"></select></label>
+        <label class="field-label">Data do mercado <select id="date" aria-label="Dia"></select></label>
+        <button class="load-button" id="load">Carregar <span>↻</span></button>
+        <div class="time-chip"><span>HORA LOCAL DO REPLAY</span><strong id="clock">--:--</strong><small id="tzlabel">—</small></div>
+      </div>
+      <div id="datePills" class="date-pills" aria-label="Escolher dia próximo"></div>
+      <div id="message" class="notice" hidden></div>
+    </section>
+
+    <section class="chart-panel main-chart" aria-labelledby="priceTitle">
+      <div class="section-top">
+        <div><h2 id="priceTitle">Evolução das brackets</h2><p class="section-caption">Preços YES históricos; linhas limitadas ao instante do replay</p></div>
+        <div class="section-right"><span class="label-pill">POLYMARKET · PREÇOS ARQUIVADOS</span></div>
+      </div>
+      <div id="priceLegend" class="legend-list" aria-label="Brackets em destaque"></div>
+      <div class="canvas-frame price-canvas-frame"><canvas id="priceChart" aria-label="Evolução dos preços históricos das brackets"></canvas><div id="priceEmpty" class="empty" hidden>Não há preços históricos neste período.</div></div>
+      <div class="chart-bottom"><span id="priceSubtitle">Seleciona uma bracket na lista inferior</span><span class="chart-source">Preço histórico ≠ ask executável</span></div>
+    </section>
+
+    <section class="weather-card" aria-labelledby="weatherTitle">
+      <div class="section-top">
+        <div><h2 id="weatherTitle">Temperatura observada <span class="new-label">EXTRA</span></h2><p class="section-caption">Leituras discretas, sem inventar valores entre reportes</p></div>
+        <label class="weather-source-control">Fonte <select id="weatherSource" aria-label="Fonte meteorológica"></select></label>
+      </div>
+      <div class="weather-overview">
+        <div class="weather-number"><span>TEMPERATURA CONHECIDA</span><strong id="currentTemp">—</strong><small id="currentTempMeta">Sem observação</small></div>
+        <div class="weather-number"><span>MÁXIMO ACUMULADO</span><strong id="maxTemp">—</strong><small id="maxTempMeta">Até este instante</small></div>
+        <div class="weather-number"><span>BRACKET SELECIONADA</span><strong id="currentBracket">—</strong><small id="currentPriceMeta">Preço histórico indisponível</small></div>
+        <div class="weather-number"><span>ASK CAPTURADO</span><strong id="currentAsk">—</strong><small id="currentAskMeta">Sem order book recente</small></div>
+      </div>
+      <div class="canvas-frame weather-canvas-frame"><canvas id="weatherChart" aria-label="Temperatura observada ao longo do dia"></canvas><div id="weatherEmpty" class="empty" hidden>Sem observações meteorológicas deste dia nos ficheiros locais. Os preços continuam disponíveis.</div></div>
+      <div class="weather-legend"><span class="key"><i class="temp-color"></i>Temperatura reportada</span><span class="key"><i class="peak-color"></i>Máximo observado</span><span class="weather-origin">Origem: <b id="weatherOrigin">—</b></span></div>
+    </section>
+
+    <section class="brackets-section" aria-labelledby="bracketsTitle">
+      <div class="brackets-section-top"><div><h2 id="bracketsTitle">Brackets</h2><p>Seleciona uma linha ou um preço YES/NO para a destacar no gráfico. Não são enviadas ordens.</p></div><div class="sort-wrap"><label>Ordenar <select id="sort"><option value="bracket">Temperatura</option><option value="price">Preço YES ↓</option></select></label></div></div>
+      <div class="market-table">
+        <div class="table-head"><span>RESULTADO</span><span class="table-price-head">YES HISTÓRICO</span><span class="table-action-head">YES · PREÇO</span><span class="table-action-head">NO · PREÇO</span></div>
+        <div id="bracketRows" class="bracket-rows"><div class="empty-list">A aguardar um mercado…</div></div>
+      </div>
+      <div class="bracket-foot"><span id="coverage">—</span><span id="dataPoints">—</span><span>Preços podem estar desatualizados; consultam-se apenas dados até ao relógio de replay.</span></div>
+    </section>
+  </main>
+
+  <div class="replay-dock" role="region" aria-label="Controlos de reprodução histórica">
+    <div class="replay-dock-inner">
+      <div class="transport"><button id="restart" title="Voltar ao início" aria-label="Voltar ao início">↺</button><button id="back" title="Recuar 5 minutos" aria-label="Recuar 5 minutos">−5m</button><button id="play" class="play-toggle" title="Reproduzir ou pausar" aria-label="Reproduzir ou pausar">▶</button><button id="forward" title="Avançar 5 minutos" aria-label="Avançar 5 minutos">+5m</button><button id="nextWeather" title="Avançar até à próxima observação meteorológica">Próx. obs. <span>→</span></button></div>
+      <div class="timeline"><div class="time-row"><strong id="timeCurrent">--:--</strong><span id="timeEnd">--:--</span></div><input id="seek" aria-label="Posição temporal" type="range" min="0" max="1000" value="0"></div>
+      <div class="speed-wrap"><label for="speed">VELOCIDADE</label><select id="speed" aria-label="Velocidade do replay"><option value="1">1×</option><option value="2">2×</option><option value="3" selected>3×</option><option value="5">5×</option><option value="10">10×</option><option value="30">30×</option><option value="auto">AUTO</option></select></div>
+    </div>
+    <div class="dock-note">1× = 1 minuto histórico / segundo real · AUTO abranda perto de novas observações · Dados locais e só leitura</div>
+  </div>
+</div>
+<script defer src="/app.js"></script>
+</body>
+</html>
